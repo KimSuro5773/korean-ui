@@ -1,0 +1,4 @@
+{
+  "description": "korean-ui hooks 모듈",
+  "modules": ["./register.ts"]
+}

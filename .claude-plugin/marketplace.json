@@ -1,0 +1,17 @@
+{
+  "name": "korean-ui",
+  "owner": {
+    "name": "KimSuro5773",
+    "url": "https://github.com/KimSuro5773"
+  },
+  "metadata": {
+    "description": "Claude Code의 명령어 설명과 설정 항목을 한국어로 표시하는 플러그인을 배포하는 마켓플레이스입니다."
+  },
+  "plugins": [
+    {
+      "name": "korean-ui",
+      "source": "./plugins/korean-ui",
+      "description": "Claude Code의 명령어 설명과 /config 설정 항목을 한국어로 표시합니다."
+    }
+  ]
+}

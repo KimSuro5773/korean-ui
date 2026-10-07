@@ -1,0 +1,33 @@
+{
+  "name": "korean-ui",
+  "version": "0.1.0",
+  "description": "Claude Code의 명령어 설명과 /config 설정 항목을 한국어로 표시합니다. 번역되지 않은 문구는 /korean-ui-translate로 Haiku가 번역해서 저장합니다.",
+  "author": {
+    "name": "KimSuro5773",
+    "url": "https://github.com/KimSuro5773"
+  },
+  "homepage": "https://github.com/KimSuro5773/korean-ui",
+  "repository": "https://github.com/KimSuro5773/korean-ui",
+  "license": "MIT",
+  "keywords": ["korean", "한국어", "localization", "mod", "translation"],
+  "userConfig": {
+    "translate_builtin": {
+      "type": "boolean",
+      "title": "기본 항목 번역",
+      "description": "Claude Code 기본 명령어와 /config 기본 항목을 한국어로 표시합니다.",
+      "default": true
+    },
+    "translate_others": {
+      "type": "boolean",
+      "title": "다른 플러그인·스킬 번역",
+      "description": "다른 플러그인의 명령어와 스킬, 직접 만든 스킬, MCP 명령어, 다른 플러그인의 설정 항목을 /korean-ui-translate로 번역한 한국어로 표시합니다.",
+      "default": false
+    },
+    "notify_untranslated": {
+      "type": "boolean",
+      "title": "미번역 알림",
+      "description": "켜진 범주에 번역되지 않은 문구가 새로 생기면 알림을 표시합니다.",
+      "default": true
+    }
+  }
+}
