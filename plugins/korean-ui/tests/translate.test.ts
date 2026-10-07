@@ -1,5 +1,5 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES } from '../hooks/lib/translation.ts'
+import { MESSAGES, failedListText } from '../hooks/lib/translation.ts'
 import {
   BUILTIN,
   CLEAR_EN,
@@ -92,21 +92,31 @@ test('Haiku 호출이 실패하면 중단하고, 앞에서 저장한 번역은 �
   expect(Object.keys(saved.commands).length).toBe(50)
 })
 
-test('형식에 맞지 않는 응답은 실패로 세고 저장하지 않습니다', async ($, on) => {
+test('형식에 맞지 않는 응답은 실패로 세고, 실패한 문구를 보여 주며, 저장하지 않습니다', async ($, on) => {
   const world = setupWorld(on, { replies: [rawAnswer('죄송합니다. 번역할 수 없습니다.')] })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(
-    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}`,
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
   )
   expect(world.saved.get('dictionary')).toBeUndefined()
 })
 
-test('Haiku가 빈 응답을 보내면 그 요청에 담은 문구만 실패로 셉니다', async ($, on) => {
+test('Haiku가 빈 응답을 보내면 그 요청에 담은 문구를 실패로 세고 보여 줍니다', async ($, on) => {
   setupWorld(on, { replies: [{ value: { isAnswered: false, reason: 'empty-reply', usage: USAGE } }] })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(
-    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}`,
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
   )
+})
+
+test('일부만 실패하면 실패한 문구만 보여 줍니다', async ($, on) => {
+  const world = setupWorld(on, { replies: [answer({ '1': 'CLI를 종료합니다' })] })
+  await describeCommand($, 'Exit the CLI', BUILTIN, 'exit')
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  expect((await run($)).text).toBe(
+    `명령어 설명 1개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
+  )
+  expect(world.saved.get('dictionary')).toEqual({ commands: { 'Exit the CLI': 'CLI를 종료합니다' }, config: {} })
 })
 
 test('번역 지침을 읽지 못하면 번역을 시작하지 않습니다', async ($, on) => {

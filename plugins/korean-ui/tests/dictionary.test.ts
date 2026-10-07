@@ -4,6 +4,7 @@ import {
   buildExport,
   categoryOf,
   emptySeen,
+  failedListText,
   failureReason,
   isEnabled,
   lookup,
@@ -157,6 +158,12 @@ test('failureReason은 모델 실패 원인을 한국어로 바꿉니다', () =>
   expect(failureReason('api-error', 529)).toBe('API 오류(상태 코드 529)')
   expect(failureReason('api-error', null)).toBe('API 오류(상태 코드 없음)')
   expect(failureReason('aborted', undefined)).toBe('호출이 중단됨')
+})
+
+test('failedListText는 실패한 원문을 한 줄에 하나씩 보여 주고 긴 원문은 80자에서 줄입니다', () => {
+  expect(failedListText([])).toBe('')
+  expect(failedListText(['Toggle the diff panel', 'Exit the CLI'])).toBe('\n실패한 문구:\n- Toggle the diff panel\n- Exit the CLI')
+  expect(failedListText(['a'.repeat(100)])).toBe(`\n실패한 문구:\n- ${'a'.repeat(80)}…`)
 })
 
 test('noticeKey는 종류와 원문을 함께 씁니다', () => {

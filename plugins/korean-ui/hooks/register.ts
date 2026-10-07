@@ -13,6 +13,7 @@ import {
   categoryOf,
   emptyDictionary,
   emptySeen,
+  failedListText,
   failureReason,
   isEnabled,
   lookup,
@@ -54,8 +55,8 @@ type State = {
   noticeScheduled: boolean
 }
 
-// Haiku에 한 번 요청한 결과입니다. stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
-type BatchOutcome = { saved: number; failed: number; stopped?: string }
+// Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
+type BatchOutcome = { saved: number; failed: string[]; stopped?: string }
 
 // Claude Code가 플러그인을 불러올 때 부르는 함수입니다. 화면 문구를 바꾸는 이벤트 처리와 번역 명령어를 등록합니다.
 export const register: Register = (on, options) => {
@@ -237,16 +238,18 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
     return MESSAGES.guideFailed(messageOf(error))
   }
   const counts: Counts = { commands: 0, config: 0, failed: 0 }
+  const failed: string[] = []
   try {
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
         const outcome = await translateBatch($, loaded, guide, kind, batch)
-        if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}`
+        if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}${failedListText(failed)}`
         counts[kind] += outcome.saved
-        counts.failed += outcome.failed
+        counts.failed += outcome.failed.length
+        failed.push(...outcome.failed)
       }
     }
-    return withOthersHint(summaryText(counts), state.settings)
+    return `${withOthersHint(summaryText(counts), state.settings)}${failedListText(failed)}`
   } finally {
     $.ui.invalidate('command.describe')
     $.ui.invalidate('config.describe')
@@ -265,12 +268,12 @@ async function translateBatch(
   try {
     reply = await $.model.complete({ model: 'haiku', system: guide, prompt: buildPrompt(kind, batch), maxTokens: 8192 })
   } catch (error) {
-    return { saved: 0, failed: 0, stopped: MESSAGES.modelFailed(messageOf(error)) }
+    return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(messageOf(error)) }
   }
   if (!reply.isAnswered) {
-    if (reply.reason === 'empty-reply') return { saved: 0, failed: batch.length }
+    if (reply.reason === 'empty-reply') return { saved: 0, failed: [...batch] }
     const status = 'status' in reply ? reply.status : null
-    return { saved: 0, failed: 0, stopped: MESSAGES.modelFailed(failureReason(reply.reason, status)) }
+    return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(failureReason(reply.reason, status)) }
   }
   const { accepted, rejected } = validateReply(batch, reply.text)
   const saved = Object.keys(accepted).length
@@ -278,10 +281,10 @@ async function translateBatch(
     try {
       await saveTranslations($, loaded, kind, accepted)
     } catch (error) {
-      return { saved: 0, failed: 0, stopped: MESSAGES.storeFailed(messageOf(error)) }
+      return { saved: 0, failed: [], stopped: MESSAGES.storeFailed(messageOf(error)) }
     }
   }
-  return { saved, failed: rejected.length }
+  return { saved, failed: rejected }
 }
 
 // 번역문을 사용자 번역 사전에 저장합니다. 다른 세션이 그사이 저장한 번역을 지우지 않도록, 저장하기 직전에 저장소를 다시 읽어 합칩니다.

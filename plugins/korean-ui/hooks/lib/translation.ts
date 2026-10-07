@@ -47,6 +47,7 @@ export const MESSAGES = {
     `기본 항목의 번역을 ${path}에 저장했습니다. 번역문이 없는 기본 항목은 ${missing}개입니다.`,
   exportFailed: (reason: string, path: string) => `내보내기 파일을 저장하지 못했습니다. 원인: ${reason}. 저장하려던 경로: ${path}`,
   notice: (count: number) => `번역되지 않은 문구가 ${count}개 있습니다. /korean-ui-translate를 실행하면 번역합니다.`,
+  failedHeader: '실패한 문구:',
 } as const
 
 // 빈 번역 사전을 만듭니다.
@@ -207,6 +208,17 @@ export function messageOf(error: unknown): string {
 export function summaryText(counts: Counts): string {
   const done = `명령어 설명 ${counts.commands}개, 설정 항목 ${counts.config}개를 번역했습니다.`
   return counts.failed > 0 ? `${done} 실패한 ${counts.failed}개는 다음에 실행할 때 다시 번역합니다.` : done
+}
+
+const FAILED_PREVIEW_LENGTH = 80
+
+// 번역에 실패한 원문을 한 줄에 하나씩 보여 주는 문장을 만듭니다. 긴 원문은 80자에서 줄이고, 실패한 원문이 없으면 빈 문자열을 돌려줍니다.
+export function failedListText(failed: readonly string[]): string {
+  if (failed.length === 0) return ''
+  const lines = failed.map((source) =>
+    source.length > FAILED_PREVIEW_LENGTH ? `- ${source.slice(0, FAILED_PREVIEW_LENGTH)}…` : `- ${source}`,
+  )
+  return `\n${MESSAGES.failedHeader}\n${lines.join('\n')}`
 }
 
 // 다른 플러그인과 스킬의 번역이 꺼져 있으면, 켜는 방법을 안내하는 문장을 덧붙입니다.
