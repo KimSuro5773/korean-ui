@@ -19,7 +19,7 @@
     },
     "translate_others": {
       "type": "boolean",
-      "title": "다른 플러그인·스킬 번역",
+      "title": "다른 플러그인과 스킬 번역",
       "description": "다른 플러그인의 명령어와 스킬, 직접 만든 스킬, MCP 명령어, 다른 플러그인의 설정 항목을 /korean-ui-translate로 번역한 한국어로 표시합니다.",
       "default": false
     },
