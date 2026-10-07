@@ -83,9 +83,9 @@ Claude Code 기본 항목은 설치하자마자 한국어로 표시됩니다. �
 - 번역에 실패한 문구가 있으면 결과 끝에 그 문구를 보여 주고, 다음에 실행할 때 다시 번역합니다.
 - 영어 원문이 바뀐 항목은 다시 번역되지 않은 상태가 됩니다. 그래서 이전 문구를 옮긴 번역이 잘못 표시되지 않습니다.
 
+
 > [!TIP]
 > "번역되지 않은 문구가 N개 있습니다"라는 알림이 보이면 `/korean-ui-translate`를 한 번 실행합니다. 주로 새 플러그인을 설치했거나 Claude Code가 업데이트된 뒤에 나타납니다.
-
 
 > [!WARNING]
 > `/korean-ui-translate`는 사용자 계정으로 Haiku 모델을 호출하므로 사용량이 소모됩니다.
@@ -99,6 +99,36 @@ claude plugin update korean-ui@korean-ui
 ```
 
 자동 업데이트를 켜려면 `/plugin`을 실행하고 **Marketplaces** 탭에서 `korean-ui`를 선택한 뒤 **Enable auto-update**를 선택합니다. 자동 업데이트를 켜면, 세션에서 첫 메시지를 보낸 뒤 백그라운드에서 새 버전을 받아 둡니다. 실행 중인 세션에는 `/reload-plugins`를 실행해야 적용되고, 다음 세션부터는 자동으로 적용됩니다.
+
+## 저장 위치
+
+이 플러그인은 다음 위치에 파일과 설정을 저장합니다. `~`는 사용자 홈 폴더를 뜻하며, Windows에서는 `C:\Users\<사용자 이름>`입니다.
+
+| 저장하는 내용 | 위치 |
+|---|---|
+| 플러그인 파일 | `~/.claude/plugins/cache/korean-ui/korean-ui/<버전>/` |
+| 마켓플레이스 사본 | `~/.claude/plugins/marketplaces/korean-ui/` |
+| `/korean-ui-translate`로 번역한 문구, 미번역 알림을 이미 표시한 문구 목록 | `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 JSON 파일 |
+| `/config`에서 정한 설정 값 | `~/.claude/settings.json`의 `pluginConfigs` 항목 |
+
+번역한 문구를 담은 JSON 파일은 30일 동안 어떤 세션에서도 사용하지 않으면 **Claude Code가 자동으로 삭제합니다.** 이 기간은 Claude Code의 `cleanupPeriodDays` 설정을 따릅니다.
+
+## 삭제하기
+
+Claude Code에서 다음 두 줄을 입력합니다.
+
+```
+/plugin uninstall korean-ui@korean-ui
+/plugin marketplace remove korean-ui
+```
+
+터미널에서는 `/plugin` 대신 `claude plugin`으로 같은 명령어를 실행할 수 있습니다.
+
+> [!NOTE]
+> 번역한 문구를 담은 JSON 파일은 플러그인을 삭제한 뒤에도 남아 있을 수 있습니다. 이 파일은 30일 뒤에 자동으로 삭제되며, 바로 지우려면 `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 파일을 직접 삭제합니다. 설치된 플러그인이 하나도 남지 않으면 플러그인 파일이 자동으로 삭제되지 않으므로, 이때는 위 표의 플러그인 파일 폴더도 직접 삭제합니다.
+
+> [!TIP]
+> 잠시 사용하지 않으려면 삭제하는 대신 `/plugin disable korean-ui@korean-ui`로 플러그인을 끕니다. 다시 켤 때는 `/plugin enable korean-ui@korean-ui`를 실행합니다. 설정 값은 그대로 남아 있고, 번역한 문구는 30일 안에 다시 켜면 그대로 남아 있습니다.
 
 ## 지원 환경
 
