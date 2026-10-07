@@ -1,8 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 import {
   MESSAGES,
+  type Rejection,
   buildExport,
   categoryOf,
+  countedFailures,
   emptySeen,
   failedListText,
   failureReason,
@@ -12,11 +14,17 @@ import {
   needsTranslation,
   noticeKey,
   parseDictionary,
+  parseFailures,
   readSettings,
   recordSeen,
+  skippedCount,
+  skippedText,
+  splitSkipped,
   splitState,
   summaryText,
   untranslated,
+  versionOf,
+  withFailures,
   withOthersHint,
   withState,
   withTranslations,
@@ -150,10 +158,16 @@ test('buildExport는 기존 기본 번역표를 모두 남기고, 확인한 기�
   )
 })
 
-test('summaryText는 실패한 문구가 있을 때만 재시도 안내를 붙입니다', () => {
-  expect(summaryText({ commands: 2, config: 1, failed: 0 })).toBe('명령어 설명 2개, 설정 항목 1개를 번역했습니다.')
-  expect(summaryText({ commands: 0, config: 0, failed: 3 })).toBe(
+test('summaryText는 실패한 문구를 다시 번역할지, 다음부터 건너뛸지 알려 줍니다', () => {
+  expect(summaryText({ commands: 2, config: 1, failed: 0, newlySkipped: 0 })).toBe('명령어 설명 2개, 설정 항목 1개를 번역했습니다.')
+  expect(summaryText({ commands: 0, config: 0, failed: 3, newlySkipped: 0 })).toBe(
     '명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 3개는 다음에 실행할 때 다시 번역합니다.',
+  )
+  expect(summaryText({ commands: 0, config: 0, failed: 3, newlySkipped: 1 })).toBe(
+    '명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 3개 중 1개는 3번 실패해서 다음부터 건너뛰고, 나머지는 다음에 실행할 때 다시 번역합니다.',
+  )
+  expect(summaryText({ commands: 0, config: 0, failed: 2, newlySkipped: 2 })).toBe(
+    '명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 2개는 3번 실패해서 다음부터 건너뜁니다.',
   )
 })
 
@@ -183,4 +197,58 @@ test('failedListText는 실패한 원문과 이유를 한 줄에 하나씩 보�
 
 test('noticeKey는 종류와 원문을 함께 씁니다', () => {
   expect(noticeKey('config', 'Theme')).toBe('config:Theme')
+})
+
+test('failedListText는 이번 실행에서 3번째로 실패한 원문에 표시를 붙입니다', () => {
+  expect(failedListText([{ source: 'Exit the CLI', reason: { code: 'empty' }, newlySkipped: true }])).toBe(
+    '\n실패한 문구:\n- Exit the CLI (빈 번역문, 3번째 실패)',
+  )
+})
+
+test('skippedText는 건너뛴 문구가 있을 때만 안내 문장을 만듭니다', () => {
+  expect(skippedText(0)).toBe('')
+  expect(skippedText(4)).toBe('\n3번 실패해서 건너뛴 문구가 4개 있습니다. 플러그인이 업데이트되면 다시 번역합니다.')
+})
+
+test('versionOf는 plugin.json에서 버전을 꺼내고, 꺼낼 수 없으면 undefined를 돌려줍니다', () => {
+  expect(versionOf('{"name":"korean-ui","version":"0.1.1"}')).toBe('0.1.1')
+  expect(versionOf('{"name":"korean-ui"}')).toBeUndefined()
+  expect(versionOf('{"version":""}')).toBeUndefined()
+  expect(versionOf('not json')).toBeUndefined()
+})
+
+test('parseFailures는 다른 버전의 기록과 형식이 잘못된 값을 버립니다', () => {
+  expect(parseFailures(undefined, '0.1.1')).toEqual({ version: '0.1.1', counts: {} })
+  expect(parseFailures({ version: '0.1.0', counts: { 'commands:A': 2 } }, '0.1.1')).toEqual({ version: '0.1.1', counts: {} })
+  expect(parseFailures({ version: '0.1.1', counts: ['x'] }, '0.1.1')).toEqual({ version: '0.1.1', counts: {} })
+  expect(
+    parseFailures({ version: '0.1.1', counts: { 'commands:A': 2, 'commands:B': 0, 'commands:C': 1.5, 'commands:D': '3' } }, '0.1.1'),
+  ).toEqual({ version: '0.1.1', counts: { 'commands:A': 2 } })
+})
+
+test('withFailures는 성공한 원문의 횟수를 지우고 실패로 센 원문에 1을 더하며 원래 기록을 바꾸지 않습니다', () => {
+  const before = { version: '0.1.1', counts: { 'commands:A': 2, 'commands:B': 1 } }
+  expect(withFailures(before, 'commands', ['B'], ['A', 'C'])).toEqual({
+    version: '0.1.1',
+    counts: { 'commands:A': 3, 'commands:C': 1 },
+  })
+  expect(before).toEqual({ version: '0.1.1', counts: { 'commands:A': 2, 'commands:B': 1 } })
+})
+
+test('countedFailures는 응답 전체를 읽지 못한 실패를 한 번에 보낸 원문이 하나일 때만 셉니다', () => {
+  const rejected: Rejection[] = [
+    { source: 'A', reason: { code: 'unparsable' } },
+    { source: 'B', reason: { code: 'token', tokens: ['/x'] } },
+  ]
+  expect(countedFailures(2, rejected)).toEqual(['B'])
+  expect(countedFailures(1, [{ source: 'A', reason: { code: 'empty-reply' } }])).toEqual(['A'])
+})
+
+test('splitSkipped는 3번 이상 실패한 원문을 빼고 뺀 수를 세며, 실패 기록이 없으면 빼지 않습니다', () => {
+  const failures = { version: '0.1.1', counts: { 'commands:A': 3, 'commands:B': 2, 'config:T': 4 } }
+  const pending = { commands: ['A', 'B', 'C'], config: ['T'] }
+  expect(splitSkipped(pending, failures)).toEqual({ pending: { commands: ['B', 'C'], config: [] }, skipped: 2 })
+  expect(splitSkipped(pending, undefined)).toEqual({ pending, skipped: 0 })
+  expect(skippedCount(failures)).toBe(2)
+  expect(skippedCount(undefined)).toBe(0)
 })

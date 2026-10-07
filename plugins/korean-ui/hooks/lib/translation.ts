@@ -21,8 +21,8 @@ export type Settings = {
 // 화면에 표시된 영어 원문과, 그 원문을 누가 제공했는지 기록합니다.
 export type Seen = Record<Kind, Map<string, Category>>
 
-// 번역 명령어가 번역한 개수와 실패한 개수입니다.
-export type Counts = { commands: number; config: number; failed: number }
+// 번역 명령어가 번역한 개수와 실패한 개수입니다. newlySkipped는 실패한 원문 중 이번 실행에서 실패 횟수가 3 이상이 된 수입니다.
+export type Counts = { commands: number; config: number; failed: number; newlySkipped: number }
 
 // 내보내기 결과입니다. json은 파일 내용, missing은 번역문이 없는 기본 항목 수, builtinCount는 확인한 기본 항목 수입니다.
 export type ExportResult = { json: string; missing: number; builtinCount: number }
@@ -56,6 +56,7 @@ export const MESSAGES = {
     unparsable: '응답을 읽을 수 없음',
     emptyReply: '응답이 비어 있음',
   },
+  skipped: (count: number) => `3번 실패해서 건너뛴 문구가 ${count}개 있습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
 } as const
 
 // 빈 번역 사전을 만듭니다.
@@ -213,19 +214,33 @@ export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-// 번역 명령어의 실행 결과를 한 문장으로 요약합니다.
+// 번역 명령어의 실행 결과를 한 문장으로 요약합니다. 실패한 원문이 있으면 다시 번역할지, 다음부터 건너뛸지 함께 알려 줍니다.
 export function summaryText(counts: Counts): string {
   const done = `명령어 설명 ${counts.commands}개, 설정 항목 ${counts.config}개를 번역했습니다.`
-  return counts.failed > 0 ? `${done} 실패한 ${counts.failed}개는 다음에 실행할 때 다시 번역합니다.` : done
+  if (counts.failed === 0) return done
+  if (counts.newlySkipped === 0) return `${done} 실패한 ${counts.failed}개는 다음에 실행할 때 다시 번역합니다.`
+  if (counts.newlySkipped === counts.failed) return `${done} 실패한 ${counts.failed}개는 3번 실패해서 다음부터 건너뜁니다.`
+  return `${done} 실패한 ${counts.failed}개 중 ${counts.newlySkipped}개는 3번 실패해서 다음부터 건너뛰고, 나머지는 다음에 실행할 때 다시 번역합니다.`
 }
 
 const FAILED_PREVIEW_LENGTH = 80
 
+// 결과에 보여 줄 실패한 원문입니다. newlySkipped가 true이면 이번 실행에서 실패 횟수가 3 이상이 되어 다음부터 건너뜁니다.
+export type FailedItem = Rejection & { newlySkipped?: boolean }
+
 // 번역에 실패한 원문과 그 이유를 한 줄에 하나씩 보여 주는 문장을 만듭니다. 실패한 원문이 없으면 빈 문자열을 돌려줍니다.
-export function failedListText(items: readonly Rejection[]): string {
+export function failedListText(items: readonly FailedItem[]): string {
   if (items.length === 0) return ''
-  const lines = items.map((item) => `- ${previewOf(item.source)} (${reasonText(item.reason)})`)
+  const lines = items.map((item) => {
+    const note = item.newlySkipped === true ? ', 3번째 실패' : ''
+    return `- ${previewOf(item.source)} (${reasonText(item.reason)}${note})`
+  })
   return `\n${MESSAGES.failedHeader}\n${lines.join('\n')}`
+}
+
+// 3번 실패해서 건너뛴 원문이 있으면 결과 끝에 붙일 문장을 만듭니다. 없으면 빈 문자열을 돌려줍니다.
+export function skippedText(count: number): string {
+  return count > 0 ? `\n${MESSAGES.skipped(count)}` : ''
 }
 
 // 결과에 보여 줄 원문을 80자에서 줄입니다.
@@ -349,6 +364,90 @@ export function reasonText(reason: RejectReason): string {
     case 'empty-reply':
       return MESSAGES.reasons.emptyReply
   }
+}
+
+// 번역에 실패한 횟수의 기록입니다. counts의 키는 noticeKey와 같은 '종류:원문' 형식이고, version은 기록한 플러그인 버전입니다.
+export type Failures = { version: string; counts: Record<string, number> }
+
+// 이 횟수만큼 실패한 원문은 다음 실행부터 Haiku에게 보내지 않습니다.
+export const SKIP_AFTER = 3
+
+// plugin.json의 내용에서 버전을 꺼냅니다. JSON이 아니거나 버전이 없으면 undefined를 돌려줍니다.
+export function versionOf(text: string): string | undefined {
+  try {
+    const value: unknown = JSON.parse(text)
+    if (typeof value !== 'object' || value === null) return undefined
+    const version = (value as Record<string, unknown>)['version']
+    return typeof version === 'string' && version !== '' ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// 저장소에서 읽은 실패 기록을 현재 버전의 기록으로 바꿉니다. 형식이 잘못되었거나 다른 버전에서 기록했으면 빈 기록을 돌려줍니다.
+export function parseFailures(raw: unknown, version: string): Failures {
+  const result: Failures = { version, counts: {} }
+  if (typeof raw !== 'object' || raw === null) return result
+  const record = raw as Record<string, unknown>
+  const counts = record['counts']
+  if (record['version'] !== version || typeof counts !== 'object' || counts === null || Array.isArray(counts)) return result
+  for (const [key, value] of Object.entries(counts)) {
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) result.counts[key] = value
+  }
+  return result
+}
+
+// 3번 이상 실패해서 건너뛸 원문인지 확인합니다. 실패 기록을 쓰지 않을 때(failures가 undefined)는 건너뛰지 않습니다.
+export function isSkipped(failures: Failures | undefined, kind: Kind, source: string): boolean {
+  return (failures?.counts[noticeKey(kind, source)] ?? 0) >= SKIP_AFTER
+}
+
+// 3번 이상 실패해서 건너뛰는 원문의 수를 셉니다.
+export function skippedCount(failures: Failures | undefined): number {
+  return Object.values(failures?.counts ?? {}).filter((count) => count >= SKIP_AFTER).length
+}
+
+// 번역할 원문에서 건너뛸 원문을 뺍니다. skipped는 뺀 원문의 수입니다.
+export function splitSkipped(
+  pending: Readonly<Record<Kind, string[]>>,
+  failures: Failures | undefined,
+): { pending: Record<Kind, string[]>; skipped: number } {
+  const result: Record<Kind, string[]> = { commands: [], config: [] }
+  let skipped = 0
+  for (const kind of KINDS) {
+    for (const source of pending[kind]) {
+      if (isSkipped(failures, kind, source)) skipped += 1
+      else result[kind].push(source)
+    }
+  }
+  return { pending: result, skipped }
+}
+
+// 응답 전체를 읽지 못해서 생긴 실패인지 확인합니다. 이런 실패는 어느 원문 때문인지 알 수 없습니다.
+function isWholeReply(reason: RejectReason): boolean {
+  return reason.code === 'unparsable' || reason.code === 'empty-reply'
+}
+
+// 실패 횟수에 더할 원문을 고릅니다. 원문 하나의 문제로 거부된 원문은 모두 고르고,
+// 응답 전체를 읽지 못한 경우는 한 번에 보낸 원문이 하나뿐일 때만 고릅니다.
+export function countedFailures(sentCount: number, rejected: readonly Rejection[]): string[] {
+  return rejected.filter((item) => !isWholeReply(item.reason) || sentCount === 1).map((item) => item.source)
+}
+
+// 실패 기록에 이번 결과를 반영한 사본을 만듭니다. 번역에 성공한 원문은 횟수를 지우고, 실패로 센 원문은 1을 더합니다.
+export function withFailures(
+  failures: Failures,
+  kind: Kind,
+  succeeded: readonly string[],
+  counted: readonly string[],
+): Failures {
+  const counts = { ...failures.counts }
+  for (const source of succeeded) delete counts[noticeKey(kind, source)]
+  for (const source of counted) {
+    const key = noticeKey(kind, source)
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return { version: failures.version, counts }
 }
 
 // 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.

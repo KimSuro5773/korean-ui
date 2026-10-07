@@ -1,12 +1,15 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES, failedListText } from '../hooks/lib/translation.ts'
+import { MESSAGES, failedListText, skippedText } from '../hooks/lib/translation.ts'
 import {
   BUILTIN,
+  BUNDLED,
   CLEAR_EN,
   CLEAR_KO,
+  GUIDE,
   OTHER,
   OTHER_EN,
   USAGE,
+  VERSION,
   answer,
   apiError,
   describeCommand,
@@ -14,12 +17,15 @@ import {
   rawAnswer,
   setupWorld,
   startSession,
+  type World,
 } from './helpers.ts'
 
 // /korean-ui-translate 명령어를 실행합니다.
 function run($: Engine, args = '') {
   return $.command.run({ command: 'korean-ui-translate', args })
 }
+
+const CLEAR_KEY = `commands:${CLEAR_EN}`
 
 test('세션이 시작되면 번역 명령어를 등록합니다', async ($, on) => {
   const world = setupWorld(on)
@@ -158,4 +164,96 @@ test('번역 결과를 저장하지 못하면 중단하고 원인을 표시합�
 test('알 수 없는 인자를 받으면 사용법을 표시합니다', async ($, on) => {
   setupWorld(on)
   expect((await run($, 'help')).text).toBe(MESSAGES.usage)
+})
+
+test('같은 문구가 3번 실패하면 다음 실행부터 Haiku에게 보내지 않습니다', async ($, on) => {
+  const world = setupWorld(on, {
+    store: { failures: { version: VERSION, counts: { [CLEAR_KEY]: 2 } } },
+    replies: [rawAnswer('번역할 수 없습니다')],
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  expect((await run($)).text).toBe(
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 3번 실패해서 다음부터 건너뜁니다. ${MESSAGES.othersHint}${failedListText([
+      { source: CLEAR_EN, reason: { code: 'unparsable' }, newlySkipped: true },
+    ])}`,
+  )
+  expect(world.saved.get('failures')).toEqual({ version: VERSION, counts: { [CLEAR_KEY]: 3 } })
+  expect((await run($)).text).toBe(`${MESSAGES.nothing} ${MESSAGES.othersHint}${skippedText(1)}`)
+  expect(world.prompts.length).toBe(1)
+})
+
+test('번역에 성공하면 그 문구의 실패 횟수를 지웁니다', async ($, on) => {
+  const world = setupWorld(on, {
+    store: { failures: { version: VERSION, counts: { [CLEAR_KEY]: 2, 'commands:Other command': 1 } } },
+    replies: [answer({ '1': CLEAR_KO })],
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await run($)
+  expect(world.saved.get('failures')).toEqual({ version: VERSION, counts: { 'commands:Other command': 1 } })
+})
+
+test('플러그인 버전이 바뀌면 실패 횟수를 초기화하고 다시 번역합니다', async ($, on) => {
+  const world = setupWorld(on, {
+    store: { failures: { version: '0.1.0', counts: { [CLEAR_KEY]: 5 } } },
+    replies: [answer({ '1': CLEAR_KO })],
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await run($)
+  expect(world.prompts.length).toBe(1)
+  expect(world.saved.get('dictionary')).toEqual({ commands: { [CLEAR_EN]: CLEAR_KO }, config: {} })
+})
+
+test('플러그인 버전을 읽지 못하면 건너뛰지 않고 실패 횟수도 저장하지 않습니다', async ($, on) => {
+  const stored = { version: VERSION, counts: { [CLEAR_KEY]: 5 } }
+  const world = setupWorld(on, {
+    files: { 'locales/ko.json': BUNDLED, 'locales/ko-guide.md': GUIDE },
+    store: { failures: stored },
+    replies: [rawAnswer('번역할 수 없습니다')],
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await run($)
+  expect(world.prompts.length).toBe(1)
+  expect(world.saved.get('failures')).toEqual(stored)
+})
+
+test('여러 문구를 보낸 응답 전체를 읽지 못하면 실패 횟수를 세지 않습니다', async ($, on) => {
+  const world = setupWorld(on, { replies: [rawAnswer('번역할 수 없습니다')] })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await describeCommand($, 'Exit the CLI', BUILTIN, 'exit')
+  await run($)
+  expect(world.saved.get('failures')).toBeUndefined()
+})
+
+test('실패 횟수를 저장하기 직전에 다른 세션이 저장한 기록과 합칩니다', async ($, on) => {
+  const world: World = setupWorld(on, {
+    replies: [
+      () => {
+        world.saved.set('failures', { version: VERSION, counts: { 'commands:Other command': 1 } })
+        return rawAnswer('번역할 수 없습니다')
+      },
+    ],
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await run($)
+  expect(world.saved.get('failures')).toEqual({ version: VERSION, counts: { 'commands:Other command': 1, [CLEAR_KEY]: 1 } })
+})
+
+test('실패 횟수를 저장하지 못해도 번역 결과는 그대로 표시합니다', async ($, on) => {
+  setupWorld(on, { replies: [rawAnswer('번역할 수 없습니다')], storeSetFailsFor: ['failures'] })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  expect((await run($)).text).toBe(
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([
+      { source: CLEAR_EN, reason: { code: 'unparsable' } },
+    ])}`,
+  )
+})
+
+test('이미 건너뛴 문구가 있으면 결과 끝에 알려 줍니다', async ($, on) => {
+  setupWorld(on, {
+    store: { failures: { version: VERSION, counts: { 'commands:Skipped command': 3 } } },
+    replies: [answer({ '1': CLEAR_KO })],
+  })
+  await describeCommand($, 'Skipped command', BUILTIN, 'skipped')
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  expect((await run($)).text).toBe(`명령어 설명 1개, 설정 항목 0개를 번역했습니다. ${MESSAGES.othersHint}${skippedText(1)}`)
 })

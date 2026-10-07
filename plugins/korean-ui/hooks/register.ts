@@ -2,8 +2,9 @@ import type { EngineInterface, ModelCompleteResult, Register } from 'claude-code
 import {
   type Counts,
   type Dictionary,
+  type FailedItem,
+  type Failures,
   type Kind,
-  type Rejection,
   type Seen,
   type Settings,
   KINDS,
@@ -13,25 +14,32 @@ import {
   buildPrompt,
   buildReverse,
   categoryOf,
+  countedFailures,
   emptyDictionary,
   emptySeen,
   failedListText,
   failureReason,
   isEnabled,
+  isSkipped,
   lookup,
   makeBatches,
   messageOf,
   needsTranslation,
   noticeKey,
   parseDictionary,
+  parseFailures,
   readSettings,
   recordSeen,
   rejectAll,
   restoreListing,
+  skippedText,
+  splitSkipped,
   splitState,
   summaryText,
   untranslated,
   validateReply,
+  versionOf,
+  withFailures,
   withOthersHint,
   withState,
   withTranslations,
@@ -39,6 +47,7 @@ import {
 
 const STORE_DICTIONARY = 'dictionary'
 const STORE_NOTIFIED = 'notified'
+const STORE_FAILURES = 'failures'
 const EXPORT_FILE = 'korean-ui-ko.json'
 const NOTICE_DELAY_MS = 1500
 
@@ -61,7 +70,7 @@ type State = {
 }
 
 // Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문과 그 이유이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
-type BatchOutcome = { saved: number; failed: Rejection[]; stopped?: string }
+type BatchOutcome = { saved: number; failed: FailedItem[]; stopped?: string }
 
 // Claude Code가 플러그인을 불러올 때 부르는 함수입니다. 화면 문구를 바꾸는 이벤트 처리와 번역 명령어를 등록합니다.
 export const register: Register = (on, options) => {
@@ -198,6 +207,53 @@ async function readNotified($: EngineInterface): Promise<Set<string>> {
   }
 }
 
+// plugin.json에서 이 플러그인의 버전을 읽습니다. 읽지 못하면 실패 횟수를 쓰지 않도록 undefined를 돌려줍니다.
+async function readVersion($: EngineInterface): Promise<string | undefined> {
+  let version: string | undefined
+  try {
+    version = versionOf(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))
+  } catch (error) {
+    $.ui.log(`플러그인 버전을 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    return undefined
+  }
+  if (version === undefined) $.ui.log('plugin.json에서 버전을 찾지 못했습니다.', { to: 'debug' })
+  return version
+}
+
+// 저장소에서 실패 횟수를 읽습니다. 버전을 모르면 실패 횟수를 쓰지 않으므로 undefined를 돌려주고, 읽지 못하면 빈 기록으로 봅니다.
+async function readFailures($: EngineInterface, version: string | undefined): Promise<Failures | undefined> {
+  if (version === undefined) return undefined
+  try {
+    return parseFailures(await $.store.get(STORE_FAILURES), version)
+  } catch (error) {
+    $.ui.log(`실패 횟수를 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    return { version, counts: {} }
+  }
+}
+
+// Haiku에 한 번 요청한 결과를 실패 횟수에 반영하고, 이번에 횟수가 3 이상이 된 원문을 돌려줍니다.
+// 다른 세션의 기록을 지우지 않도록 저장하기 직전에 다시 읽어서 반영하며, 저장하지 못해도 번역은 계속합니다.
+async function recordFailures(
+  $: EngineInterface,
+  version: string | undefined,
+  kind: Kind,
+  succeeded: readonly string[],
+  counted: readonly string[],
+): Promise<Set<string>> {
+  if (version === undefined) return new Set()
+  try {
+    const latest = parseFailures(await $.store.get(STORE_FAILURES), version)
+    const hasCount = (source: string) => latest.counts[noticeKey(kind, source)] !== undefined
+    if (counted.length === 0 && !succeeded.some(hasCount)) return new Set()
+    const next = withFailures(latest, kind, succeeded, counted)
+    await $.store.set(STORE_FAILURES, next)
+    return new Set(counted.filter((source) => isSkipped(next, kind, source)))
+  } catch (error) {
+    $.ui.log(`실패 횟수를 저장하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    return new Set()
+  }
+}
+
 // 미번역 알림을 1.5초 뒤로 예약합니다. 명령어마다 따로 발생하는 이벤트를 기다렸다가 한 번에 세기 위해서이며,
 // 플러그인이 로드된 동안 한 번만 예약합니다.
 function scheduleNotice($: EngineInterface, state: State): void {
@@ -236,44 +292,50 @@ async function collectSources($: EngineInterface): Promise<void> {
 }
 
 // 번역문이 없는 문구를 Haiku로 번역해서 사용자 번역 사전에 저장하고, 결과를 요약한 문장을 돌려줍니다.
+// 3번 이상 실패한 문구는 보내지 않고, 건너뛴 수를 결과 끝에 알려 줍니다.
 async function runTranslate($: EngineInterface, state: State): Promise<string> {
   if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
   await collectSources($)
   const loaded = await ensureLoaded($, state)
-  const pending = untranslated(state.seen, state.settings, loaded.bundled, loaded.user)
-  if (pending.commands.length + pending.config.length === 0) return withOthersHint(MESSAGES.nothing, state.settings)
+  const version = await readVersion($)
+  const failures = await readFailures($, version)
+  const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
+  const tail = skippedText(skipped)
+  if (pending.commands.length + pending.config.length === 0) return `${withOthersHint(MESSAGES.nothing, state.settings)}${tail}`
   let guide: string
   try {
     guide = await $.fs.read(`${$.plugin.root}/locales/ko-guide.md`)
   } catch (error) {
     return MESSAGES.guideFailed(messageOf(error))
   }
-  const counts: Counts = { commands: 0, config: 0, failed: 0 }
-  const failed: Rejection[] = []
+  const counts: Counts = { commands: 0, config: 0, failed: 0, newlySkipped: 0 }
+  const failed: FailedItem[] = []
   try {
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
-        const outcome = await translateBatch($, loaded, guide, kind, batch)
-        if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}${failedListText(failed)}`
+        const outcome = await translateBatch($, loaded, guide, kind, batch, version)
+        if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}${failedListText(failed)}${tail}`
         counts[kind] += outcome.saved
         counts.failed += outcome.failed.length
+        counts.newlySkipped += outcome.failed.filter((item) => item.newlySkipped === true).length
         failed.push(...outcome.failed)
       }
     }
-    return `${withOthersHint(summaryText(counts), state.settings)}${failedListText(failed)}`
+    return `${withOthersHint(summaryText(counts), state.settings)}${failedListText(failed)}${tail}`
   } finally {
     $.ui.invalidate('command.describe')
     $.ui.invalidate('config.describe')
   }
 }
 
-// 원문 몇 개를 Haiku에 한 번 보내 번역하고, 검사를 통과한 번역문을 저장합니다.
+// 원문 몇 개를 Haiku에 한 번 보내 번역하고, 검사를 통과한 번역문을 저장합니다. 결과는 실패 횟수에도 반영합니다.
 async function translateBatch(
   $: EngineInterface,
   loaded: Loaded,
   guide: string,
   kind: Kind,
   batch: readonly string[],
+  version: string | undefined,
 ): Promise<BatchOutcome> {
   let reply: ModelCompleteResult
   try {
@@ -294,7 +356,8 @@ async function translateBatch(
       return { saved: 0, failed: [], stopped: MESSAGES.storeFailed(messageOf(error)) }
     }
   }
-  return { saved, failed: rejected }
+  const newlySkipped = await recordFailures($, version, kind, Object.keys(accepted), countedFailures(batch.length, rejected))
+  return { saved, failed: rejected.map((item) => ({ ...item, newlySkipped: newlySkipped.has(item.source) })) }
 }
 
 // 번역문을 사용자 번역 사전에 저장합니다. 다른 세션이 그사이 저장한 번역을 지우지 않도록, 저장하기 직전에 저장소를 다시 읽어 합칩니다.

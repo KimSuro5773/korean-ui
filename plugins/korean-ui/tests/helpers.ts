@@ -19,6 +19,8 @@ export const MODEL_EN = 'Set the AI model for Claude Code'
 export const MODEL_KO = 'Claude Code의 AI 모델을 설정합니다'
 export const BUNDLED = JSON.stringify({ commands: { [HELP_EN]: HELP_KO, [MODEL_EN]: MODEL_KO }, config: { Theme: '테마' } })
 export const GUIDE = '# 시험용 번역 지침'
+export const VERSION = '0.1.1'
+export const PLUGIN_JSON = JSON.stringify({ name: 'korean-ui', version: VERSION })
 
 type Provider = { plugin: string; tier: string }
 
@@ -36,9 +38,11 @@ export type WorldOptions = {
   store?: Record<string, unknown>
   // 경로의 끝부분과 그 파일의 내용입니다. null이면 읽기가 실패합니다.
   files?: Record<string, string | null>
-  // $.model.complete가 차례로 돌려줄 가짜 응답입니다.
+  // $.model.complete가 차례로 돌려줄 가짜 응답입니다. 함수이면 호출해서 그 결과를 돌려줍니다.
   replies?: unknown[]
   storeSetFails?: boolean
+  // 이 키에 저장할 때만 실패합니다.
+  storeSetFailsFor?: string[]
   writeFails?: boolean
   // $.session.cwd가 돌려줄 작업 폴더입니다. 정하지 않으면 '/work'입니다.
   cwd?: string
@@ -46,7 +50,11 @@ export type WorldOptions = {
 
 // Claude Code가 대답해야 하는 자리를 모두 가짜 응답으로 채우고, 테스트에서 확인할 기록을 돌려줍니다.
 export function setupWorld(on: On, options: WorldOptions = {}): World {
-  const files = options.files ?? { 'locales/ko.json': BUNDLED, 'locales/ko-guide.md': GUIDE }
+  const files = options.files ?? {
+    'locales/ko.json': BUNDLED,
+    'locales/ko-guide.md': GUIDE,
+    '.claude-plugin/plugin.json': PLUGIN_JSON,
+  }
   const replies = [...(options.replies ?? [])]
   const world: World = {
     saved: new Map(Object.entries(options.store ?? {})),
@@ -70,7 +78,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   })
   on('store.get', ($, e) => ({ value: world.saved.get(e.key) }))
   on('store.set', ($, e) => {
-    if (options.storeSetFails === true) return { deny: 'store is full' }
+    if (options.storeSetFails === true || options.storeSetFailsFor?.includes(e.key) === true) return { deny: 'store is full' }
     world.saved.set(e.key, e.value)
     return { value: undefined }
   })
@@ -89,7 +97,9 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   on('session.start', () => ({ cwd: '/work' }))
   on('model.complete', ($, e) => {
     world.prompts.push(String(e.prompt))
-    return replies.shift() ?? answer({})
+    const next = replies.shift()
+    if (typeof next === 'function') return (next as () => unknown)()
+    return next ?? answer({})
   })
   on('command.describe', ($, e) => ({ description: e.description, argumentHint: e.argumentHint, isHidden: e.isHidden }))
   on('config.describe', ($, e) => ({ label: e.label, description: e.description, isHidden: e.isHidden }))
