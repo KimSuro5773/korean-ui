@@ -33,8 +33,7 @@ export const MESSAGES = {
   nothing: '번역할 문구가 없습니다.',
   noCategory: "번역 항목이 모두 꺼져 있습니다. /config에서 '기본 항목 번역'이나 '다른 플러그인과 스킬 번역'을 켜 주세요.",
   othersHint: '다른 플러그인과 스킬도 번역하려면 /config에서 해당 항목을 켠 뒤 다시 실행하세요.',
-  usage:
-    '사용법: /korean-ui-translate는 번역되지 않은 문구를 번역하고, /korean-ui-translate export는 기본 항목의 번역을 파일로 내보냅니다.',
+  usage: '사용법: /korean-ui-translate를 인자 없이 실행하면 번역되지 않은 문구를 번역합니다.',
   exportNothingSeen:
     '아직 확인한 기본 항목이 없어서 내보내지 않았습니다. 입력창에 /를 입력해 명령어 목록을 한 번 연 뒤 다시 실행하세요.',
   guideFailed: (reason: string) =>
@@ -505,8 +504,9 @@ export function originalOf(shown: string, reverse: ReadonlyMap<string, string>):
   return undefined
 }
 
-// 스킬 목록을 되돌린 결과입니다. restored는 되돌린 줄 수, leftover는 되돌리지 못하고 남은 번역문 수입니다.
-export type ListingRestore = { text: string; restored: number; leftover: number }
+// 스킬 목록을 되돌린 결과입니다. restored는 되돌린 줄 수이고, 그중 byName은 명령어 이름으로 원문을 찾은 줄 수입니다.
+// leftover는 되돌리지 못하고 남은 번역문 수입니다.
+export type ListingRestore = { text: string; restored: number; byName: number; leftover: number }
 
 const LISTING_LINE = /^- (\S+): (.*)$/
 
@@ -519,17 +519,20 @@ export function restoreListing(
   named: ReadonlyMap<string, ReadonlyMap<string, string>>,
 ): ListingRestore {
   let restored = 0
+  let byName = 0
   const lines = text.split('\n').map((line) => {
     const match = LISTING_LINE.exec(line)
     if (match === null) return line
     const shown = match[2] ?? ''
     const own = named.get(match[1] ?? '')
-    const original = (own === undefined ? undefined : originalOf(shown, own)) ?? originalOf(shown, reverse)
+    const fromOwn = own === undefined ? undefined : originalOf(shown, own)
+    const original = fromOwn ?? originalOf(shown, reverse)
     if (original === undefined) return line
     restored += 1
+    if (fromOwn !== undefined) byName += 1
     return `- ${match[1] ?? ''}: ${original}`
   })
   const result = lines.join('\n')
   const leftover = [...reverse.keys()].filter((translated) => result.includes(translated)).length
-  return { text: result, restored, leftover }
+  return { text: result, restored, byName, leftover }
 }

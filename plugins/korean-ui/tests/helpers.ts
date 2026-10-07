@@ -28,6 +28,7 @@ type Provider = { plugin: string; tier: string }
 export type World = {
   saved: Map<string, unknown>
   toasts: string[]
+  logs: string[]
   written: { path: string; text: string }[]
   prompts: string[]
   registered: unknown[]
@@ -59,6 +60,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   const world: World = {
     saved: new Map(Object.entries(options.store ?? {})),
     toasts: [],
+    logs: [],
     written: [],
     prompts: [],
     registered: [],
@@ -86,7 +88,10 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     world.toasts.push(e.text)
     return { value: undefined }
   })
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', ($, e) => {
+    world.logs.push(e.text)
+    return { value: undefined }
+  })
   on('command.register', ($, e) => {
     world.registered.push(e)
     return { value: undefined }

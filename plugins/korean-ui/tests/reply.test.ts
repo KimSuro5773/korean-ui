@@ -135,13 +135,14 @@ test('restoreListing은 번역문이 들어간 줄만 영어 원문으로 되돌
   expect(restoreListing(text, REVERSE, new Map())).toEqual({
     text: [HEADER, '', '- kui:skill: Use when the user asks', '- other: Other skill', '- mine: 직접 만든 한국어 스킬입니다'].join('\n'),
     restored: 1,
+    byName: 0,
     leftover: 0,
   })
 })
 
 test('restoreListing은 형식이 달라 되돌리지 못한 번역문의 개수를 셉니다', () => {
   const text = '* kui:skill — 사용자가 요청할 때 사용합니다'
-  expect(restoreListing(text, REVERSE, new Map())).toEqual({ text, restored: 0, leftover: 1 })
+  expect(restoreListing(text, REVERSE, new Map())).toEqual({ text, restored: 0, byName: 0, leftover: 1 })
 })
 
 test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 명령어 이름으로 원문을 고릅니다', () => {
@@ -155,6 +156,7 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
   expect(restoreListing(text, buildReverse(bundled, user), buildNamedReverse(described, bundled, user))).toEqual({
     text: '- unit: Run tests\n- suite: Run the test suite',
     restored: 2,
+    byName: 2,
     leftover: 0,
   })
 })
@@ -166,4 +168,23 @@ test('buildNamedReverse는 명령어마다 자기 번역문으로 원문을 찾�
   expect(originalOf('Claude Code의 AI 모델을 설정합니다(현재 Sonnet 5.5)', named.get('model') ?? new Map())).toBe(
     'Set the AI model for Claude Code (currently Sonnet 5.5)',
   )
+})
+
+test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체에서 찾은 줄을 나눠 셉니다', () => {
+  const bundled = {
+    commands: {
+      'Use when the user asks': '사용자가 요청할 때 사용합니다',
+      'Set the AI model for Claude Code': 'Claude Code의 AI 모델을 설정합니다',
+    },
+    config: {},
+  }
+  const user = { commands: {}, config: {} }
+  const named = buildNamedReverse(new Map([['kui:skill', 'Use when the user asks']]), bundled, user)
+  const text = '- kui:skill: 사용자가 요청할 때 사용합니다\n- model: Claude Code의 AI 모델을 설정합니다'
+  expect(restoreListing(text, buildReverse(bundled, user), named)).toEqual({
+    text: '- kui:skill: Use when the user asks\n- model: Set the AI model for Claude Code',
+    restored: 2,
+    byName: 1,
+    leftover: 0,
+  })
 })

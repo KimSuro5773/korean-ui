@@ -128,3 +128,12 @@ test('번역문이 없으면 스킬 목록을 그대로 보냅니다', async ($,
   const text = `- clear: ${CLEAR_EN}`
   expect((await sendListing($, text)).text).toBe(text)
 })
+
+test('스킬 목록을 되돌리면 디버그 로그에 되돌린 줄 수를 남깁니다', async ($, on) => {
+  const world = setupWorld(on)
+  await describeCommand($, HELP_EN)
+  await sendListing($, `- help: ${HELP_KO}\n- model: ${MODEL_KO}`)
+  expect(world.logs).toContain(
+    '스킬 목록에서 설명 2줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 1개, 두 사전 전체에서 찾은 줄 1개).',
+  )
+})

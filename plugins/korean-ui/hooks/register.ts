@@ -95,7 +95,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     state.interactive = e.isInteractive
     try {
-      await $.command.register({ name: 'korean-ui-translate', description: MESSAGES.commandDescription, argumentHint: '[export]' })
+      await $.command.register({ name: 'korean-ui-translate', description: MESSAGES.commandDescription })
     } catch (error) {
       $.ui.log(`번역 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
@@ -113,6 +113,7 @@ export const register: Register = (on, options) => {
 
   // Claude에게 보내기 직전의 스킬 목록에서 번역문을 영어 원문으로 되돌립니다.
   // 번역을 끈 뒤에도 Claude Code가 이전에 만든 목록을 다시 쓰는 경우가 있으므로, 설정과 관계없이 번역 사전을 기준으로 되돌립니다.
+  // 되돌린 줄 수를 디버그 로그에 남겨서, 명령어 이름으로 원문을 찾았는지 확인할 수 있게 합니다.
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     const loaded = await ensureLoaded($, state)
     const result = restoreListing(
@@ -120,6 +121,12 @@ export const register: Register = (on, options) => {
       buildReverse(loaded.bundled, loaded.user),
       buildNamedReverse(state.described, loaded.bundled, loaded.user),
     )
+    if (result.restored > 0) {
+      $.ui.log(
+        `스킬 목록에서 설명 ${result.restored}줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 ${result.byName}개, 두 사전 전체에서 찾은 줄 ${result.restored - result.byName}개).`,
+        { to: 'debug' },
+      )
+    }
     if (result.leftover > 0) {
       $.ui.log(`스킬 목록을 되돌린 뒤에도 번역문 ${result.leftover}개가 남아 있습니다. 목록 형식이 바뀌었을 수 있습니다.`, {
         to: 'debug',

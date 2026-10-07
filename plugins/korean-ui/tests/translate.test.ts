@@ -27,12 +27,10 @@ function run($: Engine, args = '') {
 
 const CLEAR_KEY = `commands:${CLEAR_EN}`
 
-test('세션이 시작되면 번역 명령어를 등록합니다', async ($, on) => {
+test('세션이 시작되면 인자 힌트 없이 번역 명령어를 등록합니다', async ($, on) => {
   const world = setupWorld(on)
   await startSession($)
-  expect(world.registered).toEqual([
-    { name: 'korean-ui-translate', description: MESSAGES.commandDescription, argumentHint: '[export]' },
-  ])
+  expect(world.registered).toEqual([{ name: 'korean-ui-translate', description: MESSAGES.commandDescription }])
 })
 
 test('미번역 기본 항목을 번역해서 저장하고 요약을 표시합니다', async ($, on) => {
@@ -163,7 +161,7 @@ test('번역 결과를 저장하지 못하면 중단하고 원인을 표시합�
 
 test('알 수 없는 인자를 받으면 사용법을 표시합니다', async ($, on) => {
   setupWorld(on)
-  expect((await run($, 'help')).text).toBe(MESSAGES.usage)
+  expect((await run($, 'help')).text).toBe('사용법: /korean-ui-translate를 인자 없이 실행하면 번역되지 않은 문구를 번역합니다.')
 })
 
 test('같은 문구가 3번 실패하면 다음 실행부터 Haiku에게 보내지 않습니다', async ($, on) => {
