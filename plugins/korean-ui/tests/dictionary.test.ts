@@ -79,6 +79,11 @@ test('needsTranslation은 빈 문구와 한글이 든 문구를 제외합니다'
   expect(needsTranslation('Use ㅋ')).toBe(false)
 })
 
+test('needsTranslation은 여러 줄로 된 문구를 제외합니다', () => {
+  expect(needsTranslation('Reference for the API.\nTRIGGER when asked.')).toBe(false)
+  expect(needsTranslation('Line one\r\nLine two')).toBe(false)
+})
+
 test('lookup은 기본 번역표를 먼저 찾고 객체의 기본 속성은 무시합니다', () => {
   const bundled = { commands: { A: '기본' }, config: {} }
   const user = { commands: { A: '사용자', B: '사용자 B' }, config: {} }
@@ -127,19 +132,22 @@ test('withTranslations는 기존 번역을 유지하고 새 번역을 더하며 
   expect(before).toEqual({ commands: { A: '가' }, config: { T: '테' } })
 })
 
-test('buildExport는 기본 항목만 정렬해서 담고 번역문이 없는 개수를 셉니다', () => {
+test('buildExport는 기존 기본 번역표를 모두 남기고, 확인한 기본 항목의 새 번역을 더해 정렬합니다', () => {
   const seen = emptySeen()
   recordSeen(seen, 'commands', 'Zeta', 'builtin')
   recordSeen(seen, 'commands', 'Alpha', 'builtin')
   recordSeen(seen, 'commands', 'Missing', 'builtin')
   recordSeen(seen, 'commands', 'Other', 'others')
   recordSeen(seen, 'config', 'Theme', 'builtin')
-  const bundled = { commands: { Zeta: '제타' }, config: { Theme: '테마' } }
+  // Conditional은 이번에 화면에 보이지 않은 기본 항목입니다. 기존 번역표에 있으므로 그대로 남아야 합니다.
+  const bundled = { commands: { Zeta: '제타', Conditional: '조건부' }, config: { Theme: '테마' } }
   const user = { commands: { Alpha: '알파', Other: '다른 것' }, config: {} }
   const result = buildExport(seen, bundled, user)
   expect(result.missing).toBe(1)
   expect(result.builtinCount).toBe(4)
-  expect(result.json).toBe(`${JSON.stringify({ commands: { Alpha: '알파', Zeta: '제타' }, config: { Theme: '테마' } }, null, 2)}\n`)
+  expect(result.json).toBe(
+    `${JSON.stringify({ commands: { Alpha: '알파', Conditional: '조건부', Zeta: '제타' }, config: { Theme: '테마' } }, null, 2)}\n`,
+  )
 })
 
 test('summaryText는 실패한 문구가 있을 때만 재시도 안내를 붙입니다', () => {

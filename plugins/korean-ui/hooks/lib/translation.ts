@@ -119,9 +119,10 @@ export function isEnabled(category: Category, settings: Settings): boolean {
 
 const HANGUL = /\p{Script=Hangul}/u
 
-// 번역할 문구인지 확인합니다. 비어 있거나 이미 한글이 들어 있으면 번역하지 않습니다.
+// 번역할 문구인지 확인합니다. 비어 있거나, 이미 한글이 들어 있거나, 여러 줄로 된 문구는 번역하지 않습니다.
+// 여러 줄로 된 설명은 Claude가 스킬을 고를 때 쓰는 긴 지시문이어서 영어 원문 그대로 둡니다.
 export function needsTranslation(source: string): boolean {
-  return source.trim() !== '' && !HANGUL.test(source)
+  return source.trim() !== '' && !HANGUL.test(source) && !/[\r\n]/.test(source)
 }
 
 // 영어 원문의 번역문을 찾습니다. 기본 번역표를 먼저 찾고, 없으면 사용자 번역 사전을 찾습니다.
@@ -174,22 +175,22 @@ export function withTranslations(dictionary: Dictionary, kind: Kind, additions: 
   return next
 }
 
-// 화면에서 확인한 Claude Code 기본 항목의 번역문을 모아 기본 번역표(ko.json)와 같은 형식의 JSON으로 만듭니다.
+// 기존 기본 번역표에, 화면에서 확인한 Claude Code 기본 항목의 새 번역문을 더해 기본 번역표(ko.json)와 같은 형식의 JSON으로 만듭니다.
+// /diff처럼 상황에 따라서만 나타나는 항목의 번역이 빠지지 않도록, 기존 기본 번역표의 항목은 모두 남깁니다.
 export function buildExport(seen: Seen, bundled: Dictionary, user: Dictionary): ExportResult {
   const out = emptyDictionary()
   let missing = 0
   let builtinCount = 0
   for (const kind of KINDS) {
-    const sources = [...seen[kind]]
-      .filter(([, category]) => category === 'builtin')
-      .map(([source]) => source)
-      .sort()
-    for (const source of sources) {
+    const merged: Record<string, string> = { ...bundled[kind] }
+    for (const [source, category] of seen[kind]) {
+      if (category !== 'builtin') continue
       builtinCount += 1
       const translated = lookup(bundled, user, kind, source)
       if (translated === undefined) missing += 1
-      else out[kind][source] = translated
+      else merged[source] = translated
     }
+    for (const source of Object.keys(merged).sort()) out[kind][source] = merged[source] ?? ''
   }
   return { json: `${JSON.stringify(out, null, 2)}\n`, missing, builtinCount }
 }

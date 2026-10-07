@@ -1,13 +1,25 @@
 import { expect, test, type Engine } from 'claude-code/testing'
 import { MESSAGES } from '../hooks/lib/translation.ts'
-import { BUILTIN, CLEAR_EN, HELP_EN, HELP_KO, OTHER, OTHER_EN, describeCommand, describeConfig, setupWorld } from './helpers.ts'
+import {
+  BUILTIN,
+  CLEAR_EN,
+  HELP_EN,
+  HELP_KO,
+  MODEL_EN,
+  MODEL_KO,
+  OTHER,
+  OTHER_EN,
+  describeCommand,
+  describeConfig,
+  setupWorld,
+} from './helpers.ts'
 
 // /korean-ui-translate export를 실행합니다.
 function runExport($: Engine) {
   return $.command.run({ command: 'korean-ui-translate', args: 'export' })
 }
 
-test('내보내기는 확인한 기본 항목의 번역만 정렬해서 저장합니다', async ($, on) => {
+test('내보내기는 기존 기본 번역표와 확인한 기본 항목의 번역을 정렬해서 저장합니다', async ($, on) => {
   const world = setupWorld(on)
   await describeCommand($, HELP_EN)
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
@@ -18,7 +30,11 @@ test('내보내기는 확인한 기본 항목의 번역만 정렬해서 저장�
   expect(world.written.length).toBe(1)
   // 공식 테스트 도구는 경로를 운영체제에 맞는 절대 경로로 바꾸어 전달하므로, 구분 기호를 맞춘 뒤 끝부분을 확인합니다.
   expect((world.written[0]?.path ?? '').replaceAll('\\', '/')).toMatch(/\/work\/korean-ui-ko\.json$/)
-  expect(JSON.parse(world.written[0]?.text ?? '')).toEqual({ commands: { [HELP_EN]: HELP_KO }, config: { Theme: '테마' } })
+  // MODEL_EN은 이번에 화면에 보이지 않았지만 기존 기본 번역표에 있으므로 그대로 남아야 합니다.
+  expect(JSON.parse(world.written[0]?.text ?? '')).toEqual({
+    commands: { [HELP_EN]: HELP_KO, [MODEL_EN]: MODEL_KO },
+    config: { Theme: '테마' },
+  })
 })
 
 test('Windows 작업 폴더에서는 안내 문구의 경로를 역슬래시로 이어 붙입니다', async ($, on) => {
