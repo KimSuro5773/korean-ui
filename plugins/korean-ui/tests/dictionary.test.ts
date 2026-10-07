@@ -54,7 +54,7 @@ test('splitState는 설명 끝의 (currently …)만 떼어 냅니다', () => {
     state: 'Opus 5.5',
   })
   expect(splitState('Show help')).toEqual({ base: 'Show help', state: undefined })
-  expect(splitState('Resume (resumable with ./resume)')).toEqual({ base: 'Resume (resumable with ./resume)', state: undefined })
+  expect(splitState('Resume (resumable with /resume)')).toEqual({ base: 'Resume (resumable with /resume)', state: undefined })
 })
 
 test('withState는 번역문 뒤에 (현재 …)를 붙입니다', () => {

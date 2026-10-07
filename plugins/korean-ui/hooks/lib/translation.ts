@@ -220,3 +220,111 @@ export function failureReason(reason: string, status: number | null | undefined)
   if (reason === 'aborted') return '호출이 중단됨'
   return reason
 }
+
+// Haiku에게 보낼 번역 요청문을 만듭니다. 원문 대신 번호를 키로 쓰게 해서, 응답의 키가 원문과 어긋나는 문제를 막습니다.
+export function buildPrompt(kind: Kind, batch: readonly string[]): string {
+  const target = kind === 'commands' ? 'Claude Code의 명령어와 스킬 설명' : 'Claude Code의 /config 설정 항목 이름과 도움말'
+  const items = batch.map((text, index) => ({ id: String(index + 1), text }))
+  return [
+    `다음은 ${target}입니다. 번역 지침에 따라 각 항목의 text를 한국어로 번역하세요.`,
+    '응답에는 id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요. 다른 설명은 쓰지 마세요.',
+    '응답 형식의 예: {"1": "번역문", "2": "번역문"}',
+    '',
+    JSON.stringify(items, null, 2),
+  ].join('\n')
+}
+
+const CODE_SPAN = /`[^`\n]+`/g
+const SLASH_COMMAND = /(?<![\w./])\.?\/[a-z][a-z0-9:_-]*/gi
+const OPTION_FLAG = /(?<![\w-])--[a-z][a-z0-9-]*/gi
+
+// 번역문에도 그대로 남아 있어야 하는 백틱 코드, 명령어, 옵션을 원문에서 찾습니다.
+export function protectedTokens(source: string): string[] {
+  return [CODE_SPAN, SLASH_COMMAND, OPTION_FLAG].flatMap((pattern) => [...source.matchAll(pattern)].map((match) => match[0]))
+}
+
+// Haiku의 응답에서 JSON 객체를 꺼냅니다. 응답이 코드 블록으로 감싸여 있으면 감싼 표시를 벗겨 냅니다.
+export function parseReply(text: string): Record<string, unknown> | undefined {
+  const trimmed = text.trim()
+  const fenced = /^```[a-z]*\s*\n([\s\S]*?)\n?```$/i.exec(trimmed)
+  const body = fenced?.[1] ?? trimmed
+  try {
+    const value: unknown = JSON.parse(body)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+    return value as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+// 응답을 검사한 결과입니다. accepted는 저장할 번역문, rejected는 다음에 다시 번역할 원문입니다.
+export type BatchCheck = { accepted: Record<string, string>; rejected: string[] }
+
+// Haiku가 보낸 번역문을 검사합니다. 비어 있지 않은 한 줄이어야 하고, 원문의 명령어, 옵션, 백틱 코드가 모두 들어 있어야 합니다.
+export function validateReply(batch: readonly string[], replyText: string): BatchCheck {
+  const parsed = parseReply(replyText)
+  const accepted: Record<string, string> = {}
+  const rejected: string[] = []
+  batch.forEach((source, index) => {
+    const key = String(index + 1)
+    const value = parsed !== undefined && Object.hasOwn(parsed, key) ? parsed[key] : undefined
+    const translated = typeof value === 'string' ? value.trim() : ''
+    const isValid =
+      translated !== '' && !/[\r\n]/.test(translated) && protectedTokens(source).every((token) => translated.includes(token))
+    if (isValid) accepted[source] = translated
+    else rejected.push(source)
+  })
+  return { accepted, rejected }
+}
+
+// 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.
+export function buildReverse(bundled: Dictionary, user: Dictionary): Map<string, string> {
+  const reverse = new Map<string, string>()
+  for (const dictionary of [user, bundled]) {
+    for (const [source, translated] of Object.entries(dictionary.commands)) reverse.set(translated, source)
+  }
+  return reverse
+}
+
+const SHOWN_STATE = /^(.*)\(현재 (.+)\)$/
+
+// 화면에 표시한 번역문이면 영어 원문을 돌려줍니다. 끝이 …로 잘렸거나 (현재 …)가 붙은 번역문도 원문을 찾습니다.
+export function originalOf(shown: string, reverse: ReadonlyMap<string, string>): string | undefined {
+  const exact = reverse.get(shown)
+  if (exact !== undefined) return exact
+  const withCurrent = SHOWN_STATE.exec(shown)
+  if (withCurrent !== null) {
+    const base = reverse.get(withCurrent[1] ?? '')
+    if (base !== undefined) return `${base} (currently ${withCurrent[2] ?? ''})`
+  }
+  if (shown.endsWith('…')) {
+    const cut = shown.slice(0, -1).trimEnd()
+    if (cut === '') return undefined
+    for (const [translated, source] of reverse) {
+      if (translated.startsWith(cut)) return source
+    }
+  }
+  return undefined
+}
+
+// 스킬 목록을 되돌린 결과입니다. restored는 되돌린 줄 수, leftover는 되돌리지 못하고 남은 번역문 수입니다.
+export type ListingRestore = { text: string; restored: number; leftover: number }
+
+const LISTING_LINE = /^- (\S+): (.*)$/
+
+// Claude에게 보내는 스킬 목록에서 화면용 번역문을 영어 원문으로 되돌립니다.
+// 되돌린 뒤에도 번역문이 남아 있으면 목록 형식이 바뀐 것이므로, 남은 개수를 함께 알려 줍니다.
+export function restoreListing(text: string, reverse: ReadonlyMap<string, string>): ListingRestore {
+  let restored = 0
+  const lines = text.split('\n').map((line) => {
+    const match = LISTING_LINE.exec(line)
+    if (match === null) return line
+    const original = originalOf(match[2] ?? '', reverse)
+    if (original === undefined) return line
+    restored += 1
+    return `- ${match[1] ?? ''}: ${original}`
+  })
+  const result = lines.join('\n')
+  const leftover = [...reverse.keys()].filter((translated) => result.includes(translated)).length
+  return { text: result, restored, leftover }
+}
