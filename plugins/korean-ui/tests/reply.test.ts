@@ -188,3 +188,21 @@ test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체�
     leftover: 0,
   })
 })
+
+test('originalOf는 뒤에 when_to_use가 붙은 번역문의 앞부분만 원문으로 바꿉니다', () => {
+  expect(originalOf('사용자가 요청할 때 사용합니다 - When the user asks to deploy', REVERSE)).toBe(
+    'Use when the user asks - When the user asks to deploy',
+  )
+  expect(originalOf('사용자가 요청할 때 사용합니다 - When the user asks to…', REVERSE)).toBe(
+    'Use when the user asks - When the user asks to…',
+  )
+  expect(originalOf('직접 만든 설명 - When the user asks', REVERSE)).toBeUndefined()
+})
+
+test('originalOf는 when_to_use 앞에 맞는 번역문이 여러 개이면 가장 긴 번역문을 고릅니다', () => {
+  const reverse = new Map([
+    ['설명합니다', 'Explain'],
+    ['설명합니다 - 자세히', 'Explain in detail'],
+  ])
+  expect(originalOf('설명합니다 - 자세히 - When asked', reverse)).toBe('Explain in detail - When asked')
+})

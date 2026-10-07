@@ -137,3 +137,13 @@ test('스킬 목록을 되돌리면 디버그 로그에 되돌린 줄 수를 남
     '스킬 목록에서 설명 2줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 1개, 두 사전 전체에서 찾은 줄 1개).',
   )
 })
+
+test('when_to_use가 붙은 스킬 목록 줄도 영어 원문으로 되돌립니다', async ($, on) => {
+  const world = setupWorld(on)
+  await describeCommand($, HELP_EN)
+  const result = await sendListing($, `- help: ${HELP_KO} - Use when the user needs help`)
+  expect(result.text).toBe(`- help: ${HELP_EN} - Use when the user needs help`)
+  expect(world.logs).toContain(
+    '스킬 목록에서 설명 1줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 1개, 두 사전 전체에서 찾은 줄 0개).',
+  )
+})

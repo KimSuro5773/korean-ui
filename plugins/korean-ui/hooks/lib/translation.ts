@@ -508,8 +508,10 @@ export function buildNamedReverse(
 }
 
 const SHOWN_STATE = /^(.*)\(현재 (.+)\)$/
+const WHEN_TO_USE_SEPARATOR = ' - '
 
-// 화면에 표시한 번역문이면 영어 원문을 돌려줍니다. 끝이 …로 잘렸거나 (현재 …)가 붙은 번역문도 원문을 찾습니다.
+// 화면에 표시한 번역문이면 영어 원문을 돌려줍니다. 끝이 …로 잘렸거나 (현재 …)가 붙은 번역문,
+// 스킬 목록에서 뒤에 ' - when_to_use'가 붙은 번역문도 원문을 찾습니다.
 export function originalOf(shown: string, reverse: ReadonlyMap<string, string>): string | undefined {
   const exact = reverse.get(shown)
   if (exact !== undefined) return exact
@@ -525,7 +527,19 @@ export function originalOf(shown: string, reverse: ReadonlyMap<string, string>):
       if (translated.startsWith(cut)) return source
     }
   }
-  return undefined
+  return originalWithSuffix(shown, reverse)
+}
+
+// 스킬 목록에서 설명 뒤에 ' - when_to_use'가 붙은 줄의 앞부분이 번역문이면, 그 부분만 영어 원문으로 바꾼 문구를 돌려줍니다.
+// 여러 번역문이 맞으면 가장 긴 번역문을 고릅니다.
+function originalWithSuffix(shown: string, reverse: ReadonlyMap<string, string>): string | undefined {
+  let matched: string | undefined
+  for (const translated of reverse.keys()) {
+    const isLonger = matched === undefined || translated.length > matched.length
+    if (isLonger && shown.startsWith(`${translated}${WHEN_TO_USE_SEPARATOR}`)) matched = translated
+  }
+  if (matched === undefined) return undefined
+  return `${reverse.get(matched) ?? ''}${shown.slice(matched.length)}`
 }
 
 // 스킬 목록을 되돌린 결과입니다. restored는 되돌린 줄 수이고, 그중 byName은 명령어 이름으로 원문을 찾은 줄 수입니다.
