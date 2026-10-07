@@ -40,6 +40,8 @@ export type WorldOptions = {
   replies?: unknown[]
   storeSetFails?: boolean
   writeFails?: boolean
+  // $.session.cwd가 돌려줄 작업 폴더입니다. 정하지 않으면 '/work'입니다.
+  cwd?: string
 }
 
 // Claude Code가 대답해야 하는 자리를 모두 가짜 응답으로 채우고, 테스트에서 확인할 기록을 돌려줍니다.
@@ -83,7 +85,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   })
   on('command.list', () => ({ value: [] }))
   on('config.list', () => ({ value: [] }))
-  on('session.cwd', () => ({ value: '/work' }))
+  on('session.cwd', () => ({ value: options.cwd ?? '/work' }))
   on('session.start', () => ({ cwd: '/work' }))
   on('model.complete', ($, e) => {
     world.prompts.push(String(e.prompt))

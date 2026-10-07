@@ -7,6 +7,7 @@ import {
   type Settings,
   KINDS,
   MESSAGES,
+  buildExport,
   buildPrompt,
   buildReverse,
   categoryOf,
@@ -18,6 +19,7 @@ import {
   makeBatches,
   messageOf,
   needsTranslation,
+  noticeKey,
   parseDictionary,
   readSettings,
   recordSeen,
@@ -32,11 +34,15 @@ import {
 } from './lib/translation.ts'
 
 const STORE_DICTIONARY = 'dictionary'
+const STORE_NOTIFIED = 'notified'
+const EXPORT_FILE = 'korean-ui-ko.json'
+const NOTICE_DELAY_MS = 1500
 
-// 처음 필요할 때 한 번 읽어 두는 기본 번역표와 사용자 번역 사전입니다. user는 번역을 저장할 때마다 새 사전으로 바뀝니다.
+// 처음 필요할 때 한 번 읽어 두는 값입니다. user는 번역을 저장할 때마다 새 사전으로 바뀌고, notified는 이미 알린 문구의 목록입니다.
 type Loaded = {
   bundled: Dictionary
   user: Dictionary
+  notified: Set<string>
 }
 
 // 플러그인이 한 번 로드된 동안 유지하는 상태입니다. /config 값을 바꾸면 플러그인이 다시 로드되어 새로 만들어집니다.
@@ -44,6 +50,8 @@ type State = {
   settings: Settings
   seen: Seen
   loading: Promise<Loaded> | undefined
+  loaded: Loaded | undefined
+  noticeScheduled: boolean
 }
 
 // Haiku에 한 번 요청한 결과입니다. stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
@@ -51,7 +59,13 @@ type BatchOutcome = { saved: number; failed: number; stopped?: string }
 
 // Claude Code가 플러그인을 불러올 때 부르는 함수입니다. 화면 문구를 바꾸는 이벤트 처리와 번역 명령어를 등록합니다.
 export const register: Register = (on, options) => {
-  const state: State = { settings: readSettings(options), seen: emptySeen(), loading: undefined }
+  const state: State = {
+    settings: readSettings(options),
+    seen: emptySeen(),
+    loading: undefined,
+    loaded: undefined,
+    noticeScheduled: false,
+  }
 
   // 세션이 시작되면 번역 명령어를 등록합니다.
   // 다시 로드된 뒤에는 Claude Code가 저장해 둔 이전 표시 결과를 지워서, 바뀐 설정이 바로 반영되게 합니다.
@@ -95,15 +109,18 @@ export const register: Register = (on, options) => {
     return next({ ...e, label: label ?? e.label, description: description ?? e.description })
   })
 
-  // /korean-ui-translate를 실행했을 때의 처리입니다. 인자가 없으면 번역하고, 알 수 없는 인자이면 사용법을 보여 줍니다.
+  // /korean-ui-translate를 실행했을 때의 처리입니다. 인자가 없으면 번역하고, export이면 기본 항목의 번역을 파일로 내보내며,
+  // 알 수 없는 인자이면 사용법을 보여 줍니다.
   on('command.run', { command: 'korean-ui-translate' }, async ($, e) => {
     const argument = e.args.trim()
     if (argument === '') return { text: await runTranslate($, state) }
+    if (argument === 'export') return { text: await runExport($, state) }
     return { text: MESSAGES.usage }
   })
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
+// 번역문이 없으면 미번역 알림을 예약합니다.
 async function translateText(
   $: EngineInterface,
   state: State,
@@ -118,18 +135,24 @@ async function translateText(
   if (!isEnabled(category, state.settings)) return undefined
   const loaded = await ensureLoaded($, state)
   const translated = lookup(loaded.bundled, loaded.user, kind, base)
-  return translated === undefined ? undefined : withState(translated, current)
+  if (translated === undefined) {
+    scheduleNotice($, state)
+    return undefined
+  }
+  return withState(translated, current)
 }
 
-// 기본 번역표와 사용자 번역 사전을 처음 한 번만 읽고, 그다음부터는 읽어 둔 값을 씁니다.
+// 기본 번역표, 사용자 번역 사전, 알림 기록을 처음 한 번만 읽고, 그다음부터는 읽어 둔 값을 씁니다.
 function ensureLoaded($: EngineInterface, state: State): Promise<Loaded> {
-  state.loading ??= loadAll($)
+  state.loading ??= loadAll($, state)
   return state.loading
 }
 
-// 기본 번역표와 사용자 번역 사전을 읽습니다.
-async function loadAll($: EngineInterface): Promise<Loaded> {
-  return { bundled: await readBundled($), user: await readUser($) }
+// 기본 번역표, 사용자 번역 사전, 알림 기록을 읽고 상태에 보관합니다.
+async function loadAll($: EngineInterface, state: State): Promise<Loaded> {
+  const loaded: Loaded = { bundled: await readBundled($), user: await readUser($), notified: await readNotified($) }
+  state.loaded = loaded
+  return loaded
 }
 
 // 플러그인 폴더의 기본 번역표를 읽습니다. 읽지 못하면 빈 사전으로 처리합니다.
@@ -150,6 +173,40 @@ async function readUser($: EngineInterface): Promise<Dictionary> {
     $.ui.log(`사용자 번역 사전을 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     return emptyDictionary()
   }
+}
+
+// 저장소에서 이미 알린 미번역 문구의 목록을 읽습니다. 읽지 못하면 빈 목록으로 처리합니다.
+async function readNotified($: EngineInterface): Promise<Set<string>> {
+  try {
+    const raw = await $.store.get(STORE_NOTIFIED)
+    return new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [])
+  } catch (error) {
+    $.ui.log(`알림 기록을 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    return new Set()
+  }
+}
+
+// 미번역 알림을 1.5초 뒤로 예약합니다. 명령어마다 따로 발생하는 이벤트를 기다렸다가 한 번에 세기 위해서이며,
+// 플러그인이 로드된 동안 한 번만 예약합니다.
+function scheduleNotice($: EngineInterface, state: State): void {
+  if (!state.settings.notifyUntranslated || state.noticeScheduled) return
+  state.noticeScheduled = true
+  $.clock.after(NOTICE_DELAY_MS, () => showNotice($, state))
+}
+
+// 아직 알리지 않은 미번역 문구가 있으면 알림을 표시하고, 알린 문구를 저장합니다.
+function showNotice($: EngineInterface, state: State): void {
+  const loaded = state.loaded
+  if (loaded === undefined) return
+  const pending = untranslated(state.seen, state.settings, loaded.bundled, loaded.user)
+  const keys = KINDS.flatMap((kind) => pending[kind].map((source) => noticeKey(kind, source)))
+  const fresh = keys.filter((key) => !loaded.notified.has(key))
+  if (fresh.length === 0) return
+  $.ui.toast(MESSAGES.notice(keys.length), { timeoutMs: 8000 })
+  for (const key of fresh) loaded.notified.add(key)
+  $.store.set(STORE_NOTIFIED, [...loaded.notified]).catch((error: unknown) => {
+    $.ui.log(`알림 기록을 저장하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+  })
 }
 
 // 명령어 목록과 /config 목록을 한 번 읽습니다. 아직 화면에 표시되지 않은 항목의 원문도 기록하기 위해서입니다.
@@ -238,4 +295,22 @@ async function saveTranslations(
   const merged = withTranslations(latest, kind, accepted)
   await $.store.set(STORE_DICTIONARY, merged)
   loaded.user = merged
+}
+
+// 화면에서 확인한 Claude Code 기본 항목의 번역을 기본 번역표와 같은 형식으로 현재 폴더에 저장합니다.
+// 확인한 기본 항목이 하나도 없으면, 빈 파일로 기본 번역표를 잘못 교체하지 않도록 파일을 쓰지 않습니다.
+async function runExport($: EngineInterface, state: State): Promise<string> {
+  await collectSources($)
+  const loaded = await ensureLoaded($, state)
+  const result = buildExport(state.seen, loaded.bundled, loaded.user)
+  if (result.builtinCount === 0) return MESSAGES.exportNothingSeen
+  const cwd = await $.session.cwd()
+  // Windows 작업 폴더이면 안내 문구의 경로가 섞여 보이지 않도록 역슬래시로 이어 붙입니다.
+  const path = `${cwd}${cwd.includes('\\') ? '\\' : '/'}${EXPORT_FILE}`
+  try {
+    await $.fs.write(path, result.json)
+  } catch (error) {
+    return MESSAGES.exportFailed(messageOf(error), path)
+  }
+  return MESSAGES.exported(path, result.missing)
 }
