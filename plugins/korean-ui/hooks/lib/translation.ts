@@ -56,11 +56,35 @@ export const MESSAGES = {
     emptyReply: '응답이 비어 있음',
   },
   skipped: (count: number) => `3번 실패해서 건너뛴 문구가 ${count}개 있습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
+  resetDescription: 'Haiku로 번역해서 저장한 문구를 모두 지웁니다',
+  resetNothing: '지울 번역이 없습니다.',
+  resetChoices: { remove: '지우기', retranslate: '지우고 다시 번역', cancel: '취소' },
+  resetQuestion: (translations: number, skipped: number): string => {
+    if (translations === 0) return `3번 실패해서 건너뛴 문구 ${skipped}개를 다시 번역할 수 있게 할까요?`
+    const lead = `기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 ${translations}개를 모두`
+    if (skipped === 0) return `${lead} 지울까요?`
+    return `${lead} 지우고, 3번 실패해서 건너뛴 문구 ${skipped}개도 다시 번역할 수 있게 할까요?`
+  },
+  resetDone: (translations: number, skipped: number): string =>
+    [
+      translations > 0 ? `Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : '',
+      skipped > 0 ? `3번 실패해서 건너뛴 문구 ${skipped}개를 다시 번역할 수 있게 했습니다.` : '',
+    ]
+      .filter((part) => part !== '')
+      .join(' '),
+  resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
+  resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
+  resetFailed: (reason: string) => `번역을 지우지 못했습니다. 원인: ${reason}. 기존 번역은 그대로 남아 있습니다.`,
 } as const
 
 // 빈 번역 사전을 만듭니다.
 export function emptyDictionary(): Dictionary {
   return { commands: {}, config: {} }
+}
+
+// 번역 사전에 든 번역문의 수를 셉니다.
+export function countEntries(dictionary: Dictionary): number {
+  return KINDS.reduce((sum, kind) => sum + Object.keys(dictionary[kind]).length, 0)
 }
 
 // 화면에 표시된 원문을 기록할 빈 목록을 만듭니다.

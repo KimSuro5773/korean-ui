@@ -31,6 +31,7 @@ export type World = {
   logs: string[]
   written: { path: string; text: string }[]
   prompts: string[]
+  questions: string[]
   registered: unknown[]
   clock: ReturnType<typeof mock.clock>
 }
@@ -44,6 +45,9 @@ export type WorldOptions = {
   storeSetFails?: boolean
   // 이 키에 저장할 때만 실패합니다.
   storeSetFailsFor?: string[]
+  // $.ui.ask에 돌려줄 답입니다. 정하지 않거나 null이면 대화상자를 닫은 것처럼 거부합니다.
+  askAnswer?: string | null
+  storeDeleteFails?: boolean
   writeFails?: boolean
   // $.session.cwd가 돌려줄 작업 폴더입니다. 정하지 않으면 '/work'입니다.
   cwd?: string
@@ -63,6 +67,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     logs: [],
     written: [],
     prompts: [],
+    questions: [],
     registered: [],
     clock: mock.clock(on),
   }
@@ -83,6 +88,20 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     if (options.storeSetFails === true || options.storeSetFailsFor?.includes(e.key) === true) return { deny: 'store is full' }
     world.saved.set(e.key, e.value)
     return { value: undefined }
+  })
+  on('store.delete', ($, e) => {
+    if (options.storeDeleteFails === true) return { deny: 'store is locked' }
+    world.saved.delete(e.key)
+    return { value: undefined }
+  })
+  // $.ui.ask는 AskUserQuestion 도구 호출로 전달되므로, 질문을 기록하고 정해 둔 답을 돌려줍니다.
+  on('tool.call', ($, e) => {
+    const call = e as unknown as { tool: string; questions?: { question?: string }[] }
+    if (call.tool !== 'AskUserQuestion') return { result: '' }
+    const question = call.questions?.[0]?.question ?? ''
+    world.questions.push(question)
+    if (options.askAnswer === undefined || options.askAnswer === null) return { deny: 'dismissed' }
+    return { result: { answers: { [question]: options.askAnswer } } }
   })
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)

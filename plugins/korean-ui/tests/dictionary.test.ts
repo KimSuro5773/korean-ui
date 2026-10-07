@@ -4,6 +4,7 @@ import {
   type Rejection,
   buildExport,
   categoryOf,
+  countEntries,
   countedFailures,
   emptySeen,
   failedListText,
@@ -258,4 +259,25 @@ test('parseNotified는 문자열이 아닌 값을 버립니다', () => {
   expect(parseNotified(['commands:A', 3, 'config:T'])).toEqual(['commands:A', 'config:T'])
   expect(parseNotified('commands:A')).toEqual([])
   expect(parseNotified(undefined)).toEqual([])
+})
+
+test('resetQuestion은 지울 번역과 건너뛴 문구의 수에 따라 질문을 만듭니다', () => {
+  expect(MESSAGES.resetQuestion(39, 0)).toBe('기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 39개를 모두 지울까요?')
+  expect(MESSAGES.resetQuestion(39, 2)).toBe(
+    '기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 39개를 모두 지우고, 3번 실패해서 건너뛴 문구 2개도 다시 번역할 수 있게 할까요?',
+  )
+  expect(MESSAGES.resetQuestion(0, 2)).toBe('3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 할까요?')
+})
+
+test('resetDone은 지운 번역과 다시 번역할 수 있게 한 문구를 알려 줍니다', () => {
+  expect(MESSAGES.resetDone(39, 0)).toBe('Haiku로 번역한 문구 39개를 지웠습니다.')
+  expect(MESSAGES.resetDone(0, 2)).toBe('3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 했습니다.')
+  expect(MESSAGES.resetDone(39, 2)).toBe(
+    'Haiku로 번역한 문구 39개를 지웠습니다. 3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 했습니다.',
+  )
+})
+
+test('countEntries는 명령어 설명과 설정 항목의 번역문 수를 더합니다', () => {
+  expect(countEntries({ commands: { A: '가', B: '나' }, config: { T: '테' } })).toBe(3)
+  expect(countEntries(EMPTY)).toBe(0)
 })

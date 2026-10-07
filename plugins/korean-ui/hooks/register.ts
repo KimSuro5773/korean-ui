@@ -14,6 +14,7 @@ import {
   buildPrompt,
   buildReverse,
   categoryOf,
+  countEntries,
   countedFailures,
   emptyDictionary,
   emptySeen,
@@ -33,6 +34,7 @@ import {
   recordSeen,
   rejectAll,
   restoreListing,
+  skippedCount,
   skippedText,
   splitSkipped,
   splitState,
@@ -88,7 +90,7 @@ export const register: Register = (on, options) => {
     described: new Map(),
   }
 
-  // 세션이 시작되면 번역 명령어를 등록합니다.
+  // 세션이 시작되면 번역 명령어와 번역 지우기 명령어를 등록합니다.
   // 사람이 입력창 앞에 있는지 기록해서, -p 실행에서는 미번역 알림을 띄우지 않게 합니다.
   // 다시 로드된 뒤에는 Claude Code가 저장해 둔 이전 표시 결과를 지워서, 바뀐 설정이 바로 반영되게 합니다.
   // 정적 검사가 등록한 명령어와 처리하는 명령어를 맞춰 볼 수 있도록, 명령어 이름은 상수 대신 그대로 적습니다.
@@ -98,6 +100,11 @@ export const register: Register = (on, options) => {
       await $.command.register({ name: 'korean-ui-translate', description: MESSAGES.commandDescription })
     } catch (error) {
       $.ui.log(`번역 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    }
+    try {
+      await $.command.register({ name: 'korean-ui-reset', description: MESSAGES.resetDescription })
+    } catch (error) {
+      $.ui.log(`번역 지우기 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
     $.ui.invalidate('command.describe')
     $.ui.invalidate('config.describe')
@@ -152,6 +159,9 @@ export const register: Register = (on, options) => {
     if (argument === 'export') return { text: await runExport($, state) }
     return { text: MESSAGES.usage }
   })
+
+  // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다. 인자는 쓰지 않습니다.
+  on('command.run', { command: 'korean-ui-reset' }, async ($) => ({ text: await runReset($, state) }))
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
@@ -431,4 +441,38 @@ async function runExport($: EngineInterface, state: State): Promise<string> {
     return MESSAGES.exportFailed(messageOf(error), path)
   }
   return MESSAGES.exported(path, result.missing)
+}
+
+// Haiku로 번역한 문구와 실패 횟수를, 사용자에게 확인을 받은 뒤 저장소에서 지웁니다. 기본 번역표와 알림 기록은 지우지 않습니다.
+// '지우고 다시 번역'을 고르면 지운 뒤 번역 명령어와 같은 번역을 실행합니다. 대화상자를 닫거나 띄울 수 없으면 취소로 봅니다.
+async function runReset($: EngineInterface, state: State): Promise<string> {
+  const loaded = await ensureLoaded($, state)
+  await refreshUser($, loaded)
+  const translations = countEntries(loaded.user)
+  const skipped = skippedCount(await readFailures($, await readVersion($)))
+  if (translations === 0 && skipped === 0) return MESSAGES.resetNothing
+  const { remove, retranslate, cancel } = MESSAGES.resetChoices
+  let answer: string
+  try {
+    answer = await $.ui.ask(MESSAGES.resetQuestion(translations, skipped), [remove, retranslate, cancel])
+  } catch {
+    return MESSAGES.resetCanceled
+  }
+  if (answer !== remove && answer !== retranslate) return MESSAGES.resetCanceled
+  try {
+    await $.store.delete(STORE_DICTIONARY)
+  } catch (error) {
+    return MESSAGES.resetFailed(messageOf(error))
+  }
+  try {
+    await $.store.delete(STORE_FAILURES)
+  } catch (error) {
+    $.ui.log(`실패 횟수를 지우지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+  }
+  loaded.user = emptyDictionary()
+  $.ui.invalidate('command.describe')
+  $.ui.invalidate('config.describe')
+  const done = MESSAGES.resetDone(translations, skipped)
+  if (answer === remove) return `${done} ${MESSAGES.resetRetranslateHint}`
+  return `${done}\n${await runTranslate($, state)}`
 }
