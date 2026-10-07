@@ -3,6 +3,7 @@ import {
   type Counts,
   type Dictionary,
   type Kind,
+  type Rejection,
   type Seen,
   type Settings,
   KINDS,
@@ -25,6 +26,7 @@ import {
   parseDictionary,
   readSettings,
   recordSeen,
+  rejectAll,
   restoreListing,
   splitState,
   summaryText,
@@ -58,8 +60,8 @@ type State = {
   described: Map<string, string>
 }
 
-// Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
-type BatchOutcome = { saved: number; failed: string[]; stopped?: string }
+// Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문과 그 이유이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
+type BatchOutcome = { saved: number; failed: Rejection[]; stopped?: string }
 
 // Claude Code가 플러그인을 불러올 때 부르는 함수입니다. 화면 문구를 바꾸는 이벤트 처리와 번역 명령어를 등록합니다.
 export const register: Register = (on, options) => {
@@ -247,7 +249,7 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
     return MESSAGES.guideFailed(messageOf(error))
   }
   const counts: Counts = { commands: 0, config: 0, failed: 0 }
-  const failed: string[] = []
+  const failed: Rejection[] = []
   try {
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
@@ -279,12 +281,11 @@ async function translateBatch(
   } catch (error) {
     return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(messageOf(error)) }
   }
-  if (!reply.isAnswered) {
-    if (reply.reason === 'empty-reply') return { saved: 0, failed: [...batch] }
+  if (!reply.isAnswered && reply.reason !== 'empty-reply') {
     const status = 'status' in reply ? reply.status : null
     return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(failureReason(reply.reason, status)) }
   }
-  const { accepted, rejected } = validateReply(batch, reply.text)
+  const { accepted, rejected } = reply.isAnswered ? validateReply(batch, reply.text) : rejectAll(batch, { code: 'empty-reply' })
   const saved = Object.keys(accepted).length
   if (saved > 0) {
     try {

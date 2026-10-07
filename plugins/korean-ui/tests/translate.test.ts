@@ -96,7 +96,7 @@ test('형식에 맞지 않는 응답은 실패로 세고, 실패한 문구를 �
   const world = setupWorld(on, { replies: [rawAnswer('죄송합니다. 번역할 수 없습니다.')] })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(
-    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([{ source: CLEAR_EN, reason: { code: 'unparsable' } }])}`,
   )
   expect(world.saved.get('dictionary')).toBeUndefined()
 })
@@ -105,7 +105,7 @@ test('Haiku가 빈 응답을 보내면 그 요청에 담은 문구를 실패로 
   setupWorld(on, { replies: [{ value: { isAnswered: false, reason: 'empty-reply', usage: USAGE } }] })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(
-    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([{ source: CLEAR_EN, reason: { code: 'empty-reply' } }])}`,
   )
 })
 
@@ -114,9 +114,21 @@ test('일부만 실패하면 실패한 문구만 보여 줍니다', async ($, on
   await describeCommand($, 'Exit the CLI', BUILTIN, 'exit')
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(
-    `명령어 설명 1개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([CLEAR_EN])}`,
+    `명령어 설명 1개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([{ source: CLEAR_EN, reason: { code: 'missing' } }])}`,
   )
   expect(world.saved.get('dictionary')).toEqual({ commands: { 'Exit the CLI': 'CLI를 종료합니다' }, config: {} })
+})
+
+test('실패한 문구 옆에 실패 이유를 표시하고, Haiku 요청에 그대로 둘 부분을 넣습니다', async ($, on) => {
+  const world = setupWorld(on, { replies: [answer({ '1': '빈 컨텍스트로 새 세션을 시작합니다' })] })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  expect((await run($)).text).toBe(
+    `명령어 설명 0개, 설정 항목 0개를 번역했습니다. 실패한 1개는 다음에 실행할 때 다시 번역합니다. ${MESSAGES.othersHint}${failedListText([
+      { source: CLEAR_EN, reason: { code: 'token', tokens: ['/resume'] } },
+    ])}`,
+  )
+  expect(world.prompts[0]).toContain('"keep": [')
+  expect(world.prompts[0]).toContain('"/resume"')
 })
 
 test('번역 지침을 읽지 못하면 번역을 시작하지 않습니다', async ($, on) => {

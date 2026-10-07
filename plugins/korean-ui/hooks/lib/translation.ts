@@ -48,6 +48,14 @@ export const MESSAGES = {
   exportFailed: (reason: string, path: string) => `내보내기 파일을 저장하지 못했습니다. 원인: ${reason}. 저장하려던 경로: ${path}`,
   notice: (count: number) => `번역되지 않은 문구가 ${count}개 있습니다. /korean-ui-translate를 실행하면 번역합니다.`,
   failedHeader: '실패한 문구:',
+  reasons: {
+    missing: '응답에 번역문이 없음',
+    empty: '빈 번역문',
+    multiline: '번역문이 여러 줄',
+    token: (tokens: readonly string[]) => `그대로 둘 부분이 빠짐: ${tokens.join(', ')}`,
+    unparsable: '응답을 읽을 수 없음',
+    emptyReply: '응답이 비어 있음',
+  },
 } as const
 
 // 빈 번역 사전을 만듭니다.
@@ -213,13 +221,16 @@ export function summaryText(counts: Counts): string {
 
 const FAILED_PREVIEW_LENGTH = 80
 
-// 번역에 실패한 원문을 한 줄에 하나씩 보여 주는 문장을 만듭니다. 긴 원문은 80자에서 줄이고, 실패한 원문이 없으면 빈 문자열을 돌려줍니다.
-export function failedListText(failed: readonly string[]): string {
-  if (failed.length === 0) return ''
-  const lines = failed.map((source) =>
-    source.length > FAILED_PREVIEW_LENGTH ? `- ${source.slice(0, FAILED_PREVIEW_LENGTH)}…` : `- ${source}`,
-  )
+// 번역에 실패한 원문과 그 이유를 한 줄에 하나씩 보여 주는 문장을 만듭니다. 실패한 원문이 없으면 빈 문자열을 돌려줍니다.
+export function failedListText(items: readonly Rejection[]): string {
+  if (items.length === 0) return ''
+  const lines = items.map((item) => `- ${previewOf(item.source)} (${reasonText(item.reason)})`)
   return `\n${MESSAGES.failedHeader}\n${lines.join('\n')}`
+}
+
+// 결과에 보여 줄 원문을 80자에서 줄입니다.
+function previewOf(source: string): string {
+  return source.length > FAILED_PREVIEW_LENGTH ? `${source.slice(0, FAILED_PREVIEW_LENGTH)}…` : source
 }
 
 // 다른 플러그인과 스킬의 번역이 꺼져 있으면, 켜는 방법을 안내하는 문장을 덧붙입니다.
@@ -235,11 +246,16 @@ export function failureReason(reason: string, status: number | null | undefined)
 }
 
 // Haiku에게 보낼 번역 요청문을 만듭니다. 원문 대신 번호를 키로 쓰게 해서, 응답의 키가 원문과 어긋나는 문제를 막습니다.
+// 원문에 그대로 둘 명령어, 옵션, 백틱 코드가 있으면 keep으로 함께 보냅니다. 응답을 검사할 때와 같은 목록입니다.
 export function buildPrompt(kind: Kind, batch: readonly string[]): string {
   const target = kind === 'commands' ? 'Claude Code의 명령어와 스킬 설명' : 'Claude Code의 /config 설정 항목 이름과 도움말'
-  const items = batch.map((text, index) => ({ id: String(index + 1), text }))
+  const items = batch.map((text, index) => {
+    const keep = protectedTokens(text)
+    return keep.length > 0 ? { id: String(index + 1), text, keep } : { id: String(index + 1), text }
+  })
   return [
     `다음은 ${target}입니다. 번역 지침에 따라 각 항목의 text를 한국어로 번역하세요.`,
+    'keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.',
     '응답에는 id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요. 다른 설명은 쓰지 마세요.',
     '응답 형식의 예: {"1": "번역문", "2": "번역문"}',
     '',
@@ -270,24 +286,69 @@ export function parseReply(text: string): Record<string, unknown> | undefined {
   }
 }
 
-// 응답을 검사한 결과입니다. accepted는 저장할 번역문, rejected는 다음에 다시 번역할 원문입니다.
-export type BatchCheck = { accepted: Record<string, string>; rejected: string[] }
+// 번역문을 받아들이지 않은 이유입니다. missing, empty, multiline, token은 원문 하나의 문제이고,
+// unparsable과 empty-reply는 응답 전체를 읽지 못한 경우입니다.
+export type RejectReason =
+  | { code: 'missing' }
+  | { code: 'empty' }
+  | { code: 'multiline' }
+  | { code: 'token'; tokens: string[] }
+  | { code: 'unparsable' }
+  | { code: 'empty-reply' }
+
+// 받아들이지 않은 원문과 그 이유입니다.
+export type Rejection = { source: string; reason: RejectReason }
+
+// 응답을 검사한 결과입니다. accepted는 저장할 번역문, rejected는 받아들이지 않은 원문과 그 이유입니다.
+export type BatchCheck = { accepted: Record<string, string>; rejected: Rejection[] }
 
 // Haiku가 보낸 번역문을 검사합니다. 비어 있지 않은 한 줄이어야 하고, 원문의 명령어, 옵션, 백틱 코드가 모두 들어 있어야 합니다.
 export function validateReply(batch: readonly string[], replyText: string): BatchCheck {
   const parsed = parseReply(replyText)
+  if (parsed === undefined) return rejectAll(batch, { code: 'unparsable' })
   const accepted: Record<string, string> = {}
-  const rejected: string[] = []
+  const rejected: Rejection[] = []
   batch.forEach((source, index) => {
     const key = String(index + 1)
-    const value = parsed !== undefined && Object.hasOwn(parsed, key) ? parsed[key] : undefined
+    const isPresent = Object.hasOwn(parsed, key)
+    const value = isPresent ? parsed[key] : undefined
     const translated = typeof value === 'string' ? value.trim() : ''
-    const isValid =
-      translated !== '' && !/[\r\n]/.test(translated) && protectedTokens(source).every((token) => translated.includes(token))
-    if (isValid) accepted[source] = translated
-    else rejected.push(source)
+    const reason: RejectReason | undefined = isPresent ? rejectionOf(source, translated) : { code: 'missing' }
+    if (reason === undefined) accepted[source] = translated
+    else rejected.push({ source, reason })
   })
   return { accepted, rejected }
+}
+
+// 번역문 하나를 검사해서 받아들이지 않을 이유를 돌려줍니다. 문제가 없으면 undefined를 돌려줍니다.
+function rejectionOf(source: string, translated: string): RejectReason | undefined {
+  if (translated === '') return { code: 'empty' }
+  if (/[\r\n]/.test(translated)) return { code: 'multiline' }
+  const lost = protectedTokens(source).filter((token) => !translated.includes(token))
+  return lost.length > 0 ? { code: 'token', tokens: lost } : undefined
+}
+
+// 한 번에 보낸 원문을 모두 같은 이유로 받아들이지 않은 결과를 만듭니다.
+export function rejectAll(batch: readonly string[], reason: RejectReason): BatchCheck {
+  return { accepted: {}, rejected: batch.map((source) => ({ source, reason })) }
+}
+
+// 실패 이유를 결과에 표시할 문구로 바꿉니다.
+export function reasonText(reason: RejectReason): string {
+  switch (reason.code) {
+    case 'missing':
+      return MESSAGES.reasons.missing
+    case 'empty':
+      return MESSAGES.reasons.empty
+    case 'multiline':
+      return MESSAGES.reasons.multiline
+    case 'token':
+      return MESSAGES.reasons.token(reason.tokens)
+    case 'unparsable':
+      return MESSAGES.reasons.unparsable
+    case 'empty-reply':
+      return MESSAGES.reasons.emptyReply
+  }
 }
 
 // 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.

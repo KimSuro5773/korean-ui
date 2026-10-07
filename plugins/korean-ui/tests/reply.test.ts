@@ -6,6 +6,7 @@ import {
   originalOf,
   parseReply,
   protectedTokens,
+  reasonText,
   restoreListing,
   validateReply,
 } from '../hooks/lib/translation.ts'
@@ -29,26 +30,59 @@ test('parseReply는 코드 블록을 벗겨 내고 객체만 받아들입니다'
   expect(parseReply('["가"]')).toBeUndefined()
 })
 
-test('validateReply는 번호로 번역문을 찾고 조건에 맞는 것만 받아들입니다', () => {
+test('validateReply는 번호로 번역문을 찾고, 받아들이지 않은 원문은 이유와 함께 돌려줍니다', () => {
   const batch = [CLEAR_EN, 'Show help', 'Open settings', 'Exit']
   const reply = JSON.stringify({ '1': CLEAR_KO, '2': '도움말을\n표시합니다', '3': '   ' })
   expect(validateReply(batch, reply)).toEqual({
     accepted: { [CLEAR_EN]: CLEAR_KO },
-    rejected: ['Show help', 'Open settings', 'Exit'],
+    rejected: [
+      { source: 'Show help', reason: { code: 'multiline' } },
+      { source: 'Open settings', reason: { code: 'empty' } },
+      { source: 'Exit', reason: { code: 'missing' } },
+    ],
   })
 })
 
-test('validateReply는 보존해야 할 부분이 빠진 번역문을 거부합니다', () => {
+test('validateReply는 보존해야 할 부분이 빠진 번역문을 거부하고 빠진 부분을 알려 줍니다', () => {
   const reply = JSON.stringify({ '1': '빈 컨텍스트로 새 세션을 시작합니다.' })
-  expect(validateReply([CLEAR_EN], reply)).toEqual({ accepted: {}, rejected: [CLEAR_EN] })
+  expect(validateReply([CLEAR_EN], reply)).toEqual({
+    accepted: {},
+    rejected: [{ source: CLEAR_EN, reason: { code: 'token', tokens: ['/resume'] } }],
+  })
 })
 
 test('validateReply는 원문을 키로 쓴 응답을 받아들이지 않습니다', () => {
-  expect(validateReply(['Show help'], JSON.stringify({ 'Show help': '도움말을 표시합니다' })).rejected).toEqual(['Show help'])
+  expect(validateReply(['Show help'], JSON.stringify({ 'Show help': '도움말을 표시합니다' })).rejected).toEqual([
+    { source: 'Show help', reason: { code: 'missing' } },
+  ])
 })
 
 test('validateReply는 응답이 JSON이 아니면 모두 거부합니다', () => {
-  expect(validateReply(['A', 'B'], 'not json')).toEqual({ accepted: {}, rejected: ['A', 'B'] })
+  expect(validateReply(['A', 'B'], 'not json')).toEqual({
+    accepted: {},
+    rejected: [
+      { source: 'A', reason: { code: 'unparsable' } },
+      { source: 'B', reason: { code: 'unparsable' } },
+    ],
+  })
+})
+
+test('validateReply는 여러 조건에 해당하면 먼저 확인한 이유 하나만 기록합니다', () => {
+  const reply = JSON.stringify({ '1': ' \n ', '2': '첫 줄\n둘째 줄', '3': 3 })
+  expect(validateReply(['Show help', CLEAR_EN, 'Exit'], reply).rejected).toEqual([
+    { source: 'Show help', reason: { code: 'empty' } },
+    { source: CLEAR_EN, reason: { code: 'multiline' } },
+    { source: 'Exit', reason: { code: 'empty' } },
+  ])
+})
+
+test('reasonText는 실패 이유를 표시 문구로 바꿉니다', () => {
+  expect(reasonText({ code: 'missing' })).toBe('응답에 번역문이 없음')
+  expect(reasonText({ code: 'empty' })).toBe('빈 번역문')
+  expect(reasonText({ code: 'multiline' })).toBe('번역문이 여러 줄')
+  expect(reasonText({ code: 'token', tokens: ['`guide`', '--watch'] })).toBe('그대로 둘 부분이 빠짐: `guide`, --watch')
+  expect(reasonText({ code: 'unparsable' })).toBe('응답을 읽을 수 없음')
+  expect(reasonText({ code: 'empty-reply' })).toBe('응답이 비어 있음')
 })
 
 test('buildPrompt는 번호를 붙인 원문과 응답 형식을 담습니다', () => {
@@ -58,6 +92,15 @@ test('buildPrompt는 번호를 붙인 원문과 응답 형식을 담습니다', 
   expect(prompt).toContain('"id": "2"')
   expect(prompt).toContain('id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요')
   expect(buildPrompt('config', ['Theme'])).toContain('/config 설정 항목')
+})
+
+test('buildPrompt는 그대로 둘 부분이 있는 항목에만 keep을 넣습니다', () => {
+  const prompt = buildPrompt('commands', ['Run `npm test` with --watch', 'Exit'])
+  expect(prompt).toContain('keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.')
+  expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
+    { id: '1', text: 'Run `npm test` with --watch', keep: ['`npm test`', '--watch'] },
+    { id: '2', text: 'Exit' },
+  ])
 })
 
 const REVERSE = new Map([

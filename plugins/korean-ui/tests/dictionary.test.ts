@@ -168,10 +168,17 @@ test('failureReason은 모델 실패 원인을 한국어로 바꿉니다', () =>
   expect(failureReason('aborted', undefined)).toBe('호출이 중단됨')
 })
 
-test('failedListText는 실패한 원문을 한 줄에 하나씩 보여 주고 긴 원문은 80자에서 줄입니다', () => {
+test('failedListText는 실패한 원문과 이유를 한 줄에 하나씩 보여 주고 긴 원문은 80자에서 줄입니다', () => {
   expect(failedListText([])).toBe('')
-  expect(failedListText(['Toggle the diff panel', 'Exit the CLI'])).toBe('\n실패한 문구:\n- Toggle the diff panel\n- Exit the CLI')
-  expect(failedListText(['a'.repeat(100)])).toBe(`\n실패한 문구:\n- ${'a'.repeat(80)}…`)
+  expect(
+    failedListText([
+      { source: 'Toggle the diff panel', reason: { code: 'empty' } },
+      { source: 'Exit the CLI', reason: { code: 'missing' } },
+    ]),
+  ).toBe('\n실패한 문구:\n- Toggle the diff panel (빈 번역문)\n- Exit the CLI (응답에 번역문이 없음)')
+  expect(failedListText([{ source: 'a'.repeat(100), reason: { code: 'unparsable' } }])).toBe(
+    `\n실패한 문구:\n- ${'a'.repeat(80)}… (응답을 읽을 수 없음)`,
+  )
 })
 
 test('noticeKey는 종류와 원문을 함께 씁니다', () => {
