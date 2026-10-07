@@ -209,6 +209,11 @@ export function noticeKey(kind: Kind, source: string): string {
   return `${kind}:${source}`
 }
 
+// 저장소에서 읽은 알림 기록을 문자열 목록으로 바꿉니다. 문자열이 아닌 값은 버립니다.
+export function parseNotified(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []
+}
+
 // 오류에서 사용자에게 보여 줄 메시지를 꺼냅니다.
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

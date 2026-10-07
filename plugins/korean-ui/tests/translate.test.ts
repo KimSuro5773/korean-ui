@@ -257,3 +257,12 @@ test('이미 건너뛴 문구가 있으면 결과 끝에 알려 줍니다', asyn
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toBe(`명령어 설명 1개, 설정 항목 0개를 번역했습니다. ${MESSAGES.othersHint}${skippedText(1)}`)
 })
+
+test('다른 세션이 저장한 번역이 있으면 Haiku를 호출하지 않고 메뉴에 반영합니다', async ($, on) => {
+  const world = setupWorld(on)
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  world.saved.set('dictionary', { commands: { [CLEAR_EN]: CLEAR_KO }, config: {} })
+  expect((await run($)).text).toBe(`${MESSAGES.nothing} ${MESSAGES.othersHint}`)
+  expect(world.prompts).toEqual([])
+  expect((await describeCommand($, CLEAR_EN, BUILTIN, 'clear')).description).toBe(CLEAR_KO)
+})

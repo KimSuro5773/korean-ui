@@ -132,9 +132,9 @@ export function describeConfig($: Engine, label: string, provider: Provider = BU
   return $.config.describe({ key, label, isHidden: false, provider, ...(description === undefined ? {} : { description }) })
 }
 
-// 세션이 시작될 때의 이벤트를 발생시킵니다.
-export function startSession($: Engine) {
-  return $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+// 세션이 시작될 때의 이벤트를 발생시킵니다. isInteractive가 false이면 -p 실행처럼 화면 없이 시작합니다.
+export function startSession($: Engine, isInteractive = true) {
+  return $.session.start({ surface: isInteractive ? 'terminal' : null, isInteractive, cwd: '/work' })
 }
 
 // Claude Code가 Claude에게 스킬 목록을 보내기 직전의 이벤트를 발생시킵니다.

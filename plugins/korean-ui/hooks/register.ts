@@ -28,6 +28,7 @@ import {
   noticeKey,
   parseDictionary,
   parseFailures,
+  parseNotified,
   readSettings,
   recordSeen,
   rejectAll,
@@ -51,7 +52,8 @@ const STORE_FAILURES = 'failures'
 const EXPORT_FILE = 'korean-ui-ko.json'
 const NOTICE_DELAY_MS = 1500
 
-// 처음 필요할 때 한 번 읽어 두는 값입니다. user는 번역을 저장할 때마다 새 사전으로 바뀌고, notified는 이미 알린 문구의 목록입니다.
+// 처음 필요할 때 한 번 읽어 두는 값입니다. notified는 이미 알린 문구의 목록입니다.
+// user와 notified는 다른 세션이 바꿀 수 있으므로, 번역하거나 알림을 띄우기 직전에 저장소에서 다시 읽습니다.
 type Loaded = {
   bundled: Dictionary
   user: Dictionary
@@ -65,6 +67,8 @@ type State = {
   loading: Promise<Loaded> | undefined
   loaded: Loaded | undefined
   noticeScheduled: boolean
+  // session.start에서 받은 값으로, 사람이 입력창 앞에 있는지 나타냅니다. -p 실행과 SDK에서는 false이고, 세션 시작 전에는 undefined입니다.
+  interactive: boolean | undefined
   // command.describe에서 받은 명령어 이름과 영어 설명입니다. 스킬 목록을 되돌릴 때 줄마다 자기 원문을 찾는 데 씁니다.
   described: Map<string, string>
 }
@@ -80,13 +84,16 @@ export const register: Register = (on, options) => {
     loading: undefined,
     loaded: undefined,
     noticeScheduled: false,
+    interactive: undefined,
     described: new Map(),
   }
 
   // 세션이 시작되면 번역 명령어를 등록합니다.
+  // 사람이 입력창 앞에 있는지 기록해서, -p 실행에서는 미번역 알림을 띄우지 않게 합니다.
   // 다시 로드된 뒤에는 Claude Code가 저장해 둔 이전 표시 결과를 지워서, 바뀐 설정이 바로 반영되게 합니다.
   // 정적 검사가 등록한 명령어와 처리하는 명령어를 맞춰 볼 수 있도록, 명령어 이름은 상수 대신 그대로 적습니다.
   on('session.start', async ($, e, next) => {
+    state.interactive = e.isInteractive
     try {
       await $.command.register({ name: 'korean-ui-translate', description: MESSAGES.commandDescription, argumentHint: '[export]' })
     } catch (error) {
@@ -199,11 +206,30 @@ async function readUser($: EngineInterface): Promise<Dictionary> {
 // 저장소에서 이미 알린 미번역 문구의 목록을 읽습니다. 읽지 못하면 빈 목록으로 처리합니다.
 async function readNotified($: EngineInterface): Promise<Set<string>> {
   try {
-    const raw = await $.store.get(STORE_NOTIFIED)
-    return new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [])
+    return new Set(parseNotified(await $.store.get(STORE_NOTIFIED)))
   } catch (error) {
     $.ui.log(`알림 기록을 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     return new Set()
+  }
+}
+
+// 저장소에서 사용자 번역 사전을 다시 읽어 메모리의 사본을 바꿉니다. 다른 세션이 저장한 번역을 쓰기 위해서이며,
+// 읽지 못하면 사본을 그대로 씁니다.
+async function refreshUser($: EngineInterface, loaded: Loaded): Promise<void> {
+  try {
+    loaded.user = parseDictionary(await $.store.get(STORE_DICTIONARY))
+  } catch (error) {
+    $.ui.log(`사용자 번역 사전을 다시 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+  }
+}
+
+// 저장소에서 알림 기록을 다시 읽어 메모리의 기록에 더합니다. 다른 세션이 알린 문구를 다시 알리지 않기 위해서이며,
+// 읽지 못하면 메모리의 기록을 그대로 씁니다.
+async function refreshNotified($: EngineInterface, loaded: Loaded): Promise<void> {
+  try {
+    for (const key of parseNotified(await $.store.get(STORE_NOTIFIED))) loaded.notified.add(key)
+  } catch (error) {
+    $.ui.log(`알림 기록을 다시 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
   }
 }
 
@@ -263,10 +289,15 @@ function scheduleNotice($: EngineInterface, state: State): void {
 }
 
 // 아직 알리지 않은 미번역 문구가 있으면 알림을 표시하고, 알린 문구를 저장합니다.
-function showNotice($: EngineInterface, state: State): void {
+// 다른 세션이 그사이 번역하거나 알린 문구, 3번 실패해서 건너뛴 문구는 알리지 않도록 저장소를 다시 읽습니다.
+// 사람이 입력창 앞에 없는 실행(-p, SDK)에서는 알림을 띄우지도, 기록하지도 않습니다.
+async function showNotice($: EngineInterface, state: State): Promise<void> {
   const loaded = state.loaded
-  if (loaded === undefined) return
-  const pending = untranslated(state.seen, state.settings, loaded.bundled, loaded.user)
+  if (loaded === undefined || state.interactive === false) return
+  await refreshUser($, loaded)
+  await refreshNotified($, loaded)
+  const failures = await readFailures($, await readVersion($))
+  const { pending } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
   const keys = KINDS.flatMap((kind) => pending[kind].map((source) => noticeKey(kind, source)))
   const fresh = keys.filter((key) => !loaded.notified.has(key))
   if (fresh.length === 0) return
@@ -292,25 +323,27 @@ async function collectSources($: EngineInterface): Promise<void> {
 }
 
 // 번역문이 없는 문구를 Haiku로 번역해서 사용자 번역 사전에 저장하고, 결과를 요약한 문장을 돌려줍니다.
+// 다른 세션이 저장한 번역을 쓰도록 시작할 때 사전을 다시 읽고, 끝나면 결과와 관계없이 메뉴를 다시 그리게 합니다.
 // 3번 이상 실패한 문구는 보내지 않고, 건너뛴 수를 결과 끝에 알려 줍니다.
 async function runTranslate($: EngineInterface, state: State): Promise<string> {
   if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
   await collectSources($)
   const loaded = await ensureLoaded($, state)
-  const version = await readVersion($)
-  const failures = await readFailures($, version)
-  const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
-  const tail = skippedText(skipped)
-  if (pending.commands.length + pending.config.length === 0) return `${withOthersHint(MESSAGES.nothing, state.settings)}${tail}`
-  let guide: string
+  await refreshUser($, loaded)
   try {
-    guide = await $.fs.read(`${$.plugin.root}/locales/ko-guide.md`)
-  } catch (error) {
-    return MESSAGES.guideFailed(messageOf(error))
-  }
-  const counts: Counts = { commands: 0, config: 0, failed: 0, newlySkipped: 0 }
-  const failed: FailedItem[] = []
-  try {
+    const version = await readVersion($)
+    const failures = await readFailures($, version)
+    const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
+    const tail = skippedText(skipped)
+    if (pending.commands.length + pending.config.length === 0) return `${withOthersHint(MESSAGES.nothing, state.settings)}${tail}`
+    let guide: string
+    try {
+      guide = await $.fs.read(`${$.plugin.root}/locales/ko-guide.md`)
+    } catch (error) {
+      return MESSAGES.guideFailed(messageOf(error))
+    }
+    const counts: Counts = { commands: 0, config: 0, failed: 0, newlySkipped: 0 }
+    const failed: FailedItem[] = []
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
         const outcome = await translateBatch($, loaded, guide, kind, batch, version)
@@ -375,9 +408,11 @@ async function saveTranslations(
 
 // 화면에서 확인한 Claude Code 기본 항목의 번역을 기본 번역표와 같은 형식으로 현재 폴더에 저장합니다.
 // 확인한 기본 항목이 하나도 없으면, 빈 파일로 기본 번역표를 잘못 교체하지 않도록 파일을 쓰지 않습니다.
+// 다른 세션이 저장한 번역도 넣도록 사용자 번역 사전을 다시 읽습니다.
 async function runExport($: EngineInterface, state: State): Promise<string> {
   await collectSources($)
   const loaded = await ensureLoaded($, state)
+  await refreshUser($, loaded)
   const result = buildExport(state.seen, loaded.bundled, loaded.user)
   if (result.builtinCount === 0) return MESSAGES.exportNothingSeen
   const cwd = await $.session.cwd()

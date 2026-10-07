@@ -15,6 +15,7 @@ import {
   noticeKey,
   parseDictionary,
   parseFailures,
+  parseNotified,
   readSettings,
   recordSeen,
   skippedCount,
@@ -251,4 +252,10 @@ test('splitSkipped는 3번 이상 실패한 원문을 빼고 뺀 수를 세며, 
   expect(splitSkipped(pending, undefined)).toEqual({ pending, skipped: 0 })
   expect(skippedCount(failures)).toBe(2)
   expect(skippedCount(undefined)).toBe(0)
+})
+
+test('parseNotified는 문자열이 아닌 값을 버립니다', () => {
+  expect(parseNotified(['commands:A', 3, 'config:T'])).toEqual(['commands:A', 'config:T'])
+  expect(parseNotified('commands:A')).toEqual([])
+  expect(parseNotified(undefined)).toEqual([])
 })
