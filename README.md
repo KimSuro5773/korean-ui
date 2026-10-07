@@ -2,7 +2,7 @@
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
-![version](https://img.shields.io/badge/version-0.1.0-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.1.1-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
   <img src="assets/menu-before.png" width="720" alt="번역 전: 명령어 설명이 영어로 표시된 / 메뉴"><br>
@@ -56,10 +56,6 @@ Claude Code 기본 명령어의 설명이 한국어로 표시됩니다.
   <img src="assets/config.png" width="620" alt="설정 항목 이름이 한국어로 표시된 /config 화면">
 </p>
 
-> [!NOTE]
-> 바뀌는 것은 화면에 표시되는 문구뿐입니다. Claude가 스킬을 고를 때 읽는 설명과 스킬 본문은 영어 원문 그대로 전달되므로, 
-**스킬이 동작하는 방식에는 영향이 없습니다.**
-
 ## 설정
 
 `/config`에서 다음 항목을 켜고 끌 수 있습니다.
@@ -80,8 +76,9 @@ Claude Code 기본 항목은 설치하자마자 한국어로 표시됩니다. �
 2. `/korean-ui-translate`를 실행합니다. 
 
 - 번역 결과는 이 컴퓨터에만 저장됩니다.
-- 번역에 실패한 문구가 있으면 결과 끝에 그 문구를 보여 주고, 다음에 실행할 때 다시 번역합니다.
+- 번역에 실패한 문구가 있으면 결과 끝에 그 문구와 실패 이유를 보여 주고, 다음에 실행할 때 다시 번역합니다. 같은 문구가 3번 실패하면 다음부터 건너뛰고, 플러그인이 업데이트되면 다시 번역합니다.
 - 영어 원문이 바뀐 항목은 다시 번역되지 않은 상태가 됩니다. 그래서 이전 문구를 옮긴 번역이 잘못 표시되지 않습니다.
+- Haiku가 번역한 문구를 모두 지우려면 `/korean-ui-reset`을 실행합니다. 확인 대화상자에서 지운 뒤 바로 다시 번역할 수도 있으며, 기본 번역표의 번역은 지워지지 않습니다.
 
 
 > [!TIP]
@@ -100,6 +97,8 @@ claude plugin update korean-ui@korean-ui
 
 자동 업데이트를 켜려면 `/plugin`을 실행하고 **Marketplaces** 탭에서 `korean-ui`를 선택한 뒤 **Enable auto-update**를 선택합니다. 자동 업데이트를 켜면, 세션에서 첫 메시지를 보낸 뒤 백그라운드에서 새 버전을 받아 둡니다. 실행 중인 세션에는 `/reload-plugins`를 실행해야 적용되고, 다음 세션부터는 자동으로 적용됩니다.
 
+버전별 변경 사항은 [CHANGELOG.md](CHANGELOG.md)에서 확인할 수 있습니다.
+
 ## 저장 위치
 
 이 플러그인은 다음 위치에 파일과 설정을 저장합니다. `~`는 사용자 홈 폴더를 뜻하며, Windows에서는 `C:\Users\<사용자 이름>`입니다.
@@ -108,7 +107,7 @@ claude plugin update korean-ui@korean-ui
 |---|---|
 | 플러그인 파일 | `~/.claude/plugins/cache/korean-ui/korean-ui/<버전>/` |
 | 마켓플레이스 사본 | `~/.claude/plugins/marketplaces/korean-ui/` |
-| `/korean-ui-translate`로 번역한 문구, 미번역 알림을 이미 표시한 문구 목록 | `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 JSON 파일 |
+| `/korean-ui-translate`로 번역한 문구, 미번역 알림을 이미 표시한 문구 목록, 번역에 실패한 횟수 | `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 JSON 파일 |
 | `/config`에서 정한 설정 값 | `~/.claude/settings.json`의 `pluginConfigs` 항목 |
 
 번역한 문구를 담은 JSON 파일은 30일 동안 어떤 세션에서도 사용하지 않으면 **Claude Code가 자동으로 삭제합니다.** 이 기간은 Claude Code의 `cleanupPeriodDays` 설정을 따릅니다.
@@ -167,11 +166,6 @@ Claude Code가 기본 설정 항목에 도움말을 제공하지 않으므로, �
 **Q. `/sandbox`의 설명이 다시 영어로 보여요.**
 
 `/sandbox`처럼 현재 상태가 설명에 들어가는 명령어는 상태마다 원문이 달라서 따로 번역됩니다. 미번역 알림이 보이면 `/korean-ui-translate`를 실행합니다.
-
-**Q. Claude에게도 한국어 설명이 전달되나요?**
-
-전달되지 않습니다. 이 플러그인은 Claude에게 보내는 스킬 목록에서 번역문을 영어 원문으로 되돌립니다. 다만 Claude Code가 업데이트되어 스킬 목록의 형식이 바뀌면, 플러그인을 고치기 전까지 한국어 설명이 전달될 수 있습니다. 이런 경우가 걱정되면 플러그인의 새 버전이 나올 때까지 `/config`에서 번역을 꺼 둡니다.
-
 
 ## 라이선스
 

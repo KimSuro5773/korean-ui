@@ -1,6 +1,7 @@
 {
   "name": "korean-ui",
-  "version": "0.1.0",
+  "displayName": "한국어 UI (korean-ui)",
+  "version": "0.1.1",
   "description": "Claude Code의 명령어 설명과 /config 설정 항목을 한국어로 표시합니다. 번역되지 않은 문구는 /korean-ui-translate로 Haiku가 번역해서 저장합니다.",
   "author": {
     "name": "KimSuro5773",
