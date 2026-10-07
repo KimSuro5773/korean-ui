@@ -102,7 +102,7 @@ test('recordSeen은 같은 원문이 기본 항목으로 한 번이라도 나오
   expect(seen.commands.get('A')).toBe('builtin')
 })
 
-test('untranslated는 켜진 범주에서 번역문이 없는 원문만 정렬해서 돌려줍니다', () => {
+test('untranslated는 번역하도록 켜 둔 항목 중에서 번역문이 없는 원문만 정렬해서 돌려줍니다', () => {
   const seen = emptySeen()
   recordSeen(seen, 'commands', 'Zeta', 'builtin')
   recordSeen(seen, 'commands', 'Alpha', 'builtin')
