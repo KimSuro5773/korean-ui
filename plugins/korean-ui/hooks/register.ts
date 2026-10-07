@@ -8,6 +8,7 @@ import {
   KINDS,
   MESSAGES,
   buildExport,
+  buildNamedReverse,
   buildPrompt,
   buildReverse,
   categoryOf,
@@ -53,6 +54,8 @@ type State = {
   loading: Promise<Loaded> | undefined
   loaded: Loaded | undefined
   noticeScheduled: boolean
+  // command.describe에서 받은 명령어 이름과 영어 설명입니다. 스킬 목록을 되돌릴 때 줄마다 자기 원문을 찾는 데 씁니다.
+  described: Map<string, string>
 }
 
 // Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
@@ -66,6 +69,7 @@ export const register: Register = (on, options) => {
     loading: undefined,
     loaded: undefined,
     noticeScheduled: false,
+    described: new Map(),
   }
 
   // 세션이 시작되면 번역 명령어를 등록합니다.
@@ -84,6 +88,7 @@ export const register: Register = (on, options) => {
 
   // 메뉴와 /help에 표시할 명령어 설명을 한국어로 바꿉니다.
   on('command.describe', async ($, e, next) => {
+    state.described.set(e.command, e.description)
     const description = await translateText($, state, 'commands', e.provider.plugin, e.description)
     return description === undefined ? next(e) : next({ ...e, description })
   })
@@ -92,7 +97,11 @@ export const register: Register = (on, options) => {
   // 번역을 끈 뒤에도 Claude Code가 이전에 만든 목록을 다시 쓰는 경우가 있으므로, 설정과 관계없이 번역 사전을 기준으로 되돌립니다.
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     const loaded = await ensureLoaded($, state)
-    const result = restoreListing(e.text, buildReverse(loaded.bundled, loaded.user))
+    const result = restoreListing(
+      e.text,
+      buildReverse(loaded.bundled, loaded.user),
+      buildNamedReverse(state.described, loaded.bundled, loaded.user),
+    )
     if (result.leftover > 0) {
       $.ui.log(`스킬 목록을 되돌린 뒤에도 번역문 ${result.leftover}개가 남아 있습니다. 목록 형식이 바뀌었을 수 있습니다.`, {
         to: 'debug',

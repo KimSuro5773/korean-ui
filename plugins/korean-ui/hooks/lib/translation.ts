@@ -299,6 +299,26 @@ export function buildReverse(bundled: Dictionary, user: Dictionary): Map<string,
   return reverse
 }
 
+// 명령어 이름마다, 그 명령어의 번역문으로만 영어 원문을 찾는 표를 만듭니다.
+// described는 command.describe에서 받은 명령어 이름과 영어 설명입니다. 다른 명령어와 번역문이 같아도 자기 원문을 찾게 합니다.
+export function buildNamedReverse(
+  described: ReadonlyMap<string, string>,
+  bundled: Dictionary,
+  user: Dictionary,
+): Map<string, Map<string, string>> {
+  const named = new Map<string, Map<string, string>>()
+  for (const [name, source] of described) {
+    const { base } = splitState(source)
+    const reverse = new Map<string, string>()
+    for (const dictionary of [user, bundled]) {
+      const translated = dictionary.commands[base]
+      if (Object.hasOwn(dictionary.commands, base) && translated !== undefined) reverse.set(translated, base)
+    }
+    named.set(name, reverse)
+  }
+  return named
+}
+
 const SHOWN_STATE = /^(.*)\(현재 (.+)\)$/
 
 // 화면에 표시한 번역문이면 영어 원문을 돌려줍니다. 끝이 …로 잘렸거나 (현재 …)가 붙은 번역문도 원문을 찾습니다.
@@ -326,13 +346,20 @@ export type ListingRestore = { text: string; restored: number; leftover: number 
 const LISTING_LINE = /^- (\S+): (.*)$/
 
 // Claude에게 보내는 스킬 목록에서 화면용 번역문을 영어 원문으로 되돌립니다.
+// 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 두 사전 전체에서 찾습니다.
 // 되돌린 뒤에도 번역문이 남아 있으면 목록 형식이 바뀐 것이므로, 남은 개수를 함께 알려 줍니다.
-export function restoreListing(text: string, reverse: ReadonlyMap<string, string>): ListingRestore {
+export function restoreListing(
+  text: string,
+  reverse: ReadonlyMap<string, string>,
+  named: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): ListingRestore {
   let restored = 0
   const lines = text.split('\n').map((line) => {
     const match = LISTING_LINE.exec(line)
     if (match === null) return line
-    const original = originalOf(match[2] ?? '', reverse)
+    const shown = match[2] ?? ''
+    const own = named.get(match[1] ?? '')
+    const original = (own === undefined ? undefined : originalOf(shown, own)) ?? originalOf(shown, reverse)
     if (original === undefined) return line
     restored += 1
     return `- ${match[1] ?? ''}: ${original}`

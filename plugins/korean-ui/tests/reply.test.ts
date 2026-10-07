@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
+  buildNamedReverse,
   buildPrompt,
   buildReverse,
   originalOf,
@@ -88,7 +89,7 @@ test('restoreListing은 번역문이 들어간 줄만 영어 원문으로 되돌
   const text = [HEADER, '', '- kui:skill: 사용자가 요청할 때 사용합니다', '- other: Other skill', '- mine: 직접 만든 한국어 스킬입니다'].join(
     '\n',
   )
-  expect(restoreListing(text, REVERSE)).toEqual({
+  expect(restoreListing(text, REVERSE, new Map())).toEqual({
     text: [HEADER, '', '- kui:skill: Use when the user asks', '- other: Other skill', '- mine: 직접 만든 한국어 스킬입니다'].join('\n'),
     restored: 1,
     leftover: 0,
@@ -97,5 +98,29 @@ test('restoreListing은 번역문이 들어간 줄만 영어 원문으로 되돌
 
 test('restoreListing은 형식이 달라 되돌리지 못한 번역문의 개수를 셉니다', () => {
   const text = '* kui:skill — 사용자가 요청할 때 사용합니다'
-  expect(restoreListing(text, REVERSE)).toEqual({ text, restored: 0, leftover: 1 })
+  expect(restoreListing(text, REVERSE, new Map())).toEqual({ text, restored: 0, leftover: 1 })
+})
+
+test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 명령어 이름으로 원문을 고릅니다', () => {
+  const bundled = { commands: {}, config: {} }
+  const user = { commands: { 'Run tests': '테스트를 실행합니다', 'Run the test suite': '테스트를 실행합니다' }, config: {} }
+  const described = new Map([
+    ['unit', 'Run tests'],
+    ['suite', 'Run the test suite'],
+  ])
+  const text = '- unit: 테스트를 실행합니다\n- suite: 테스트를 실행합니다'
+  expect(restoreListing(text, buildReverse(bundled, user), buildNamedReverse(described, bundled, user))).toEqual({
+    text: '- unit: Run tests\n- suite: Run the test suite',
+    restored: 2,
+    leftover: 0,
+  })
+})
+
+test('buildNamedReverse는 명령어마다 자기 번역문으로 원문을 찾고, (현재 …)가 달라도 원문을 찾습니다', () => {
+  const bundled = { commands: { 'Set the AI model for Claude Code': 'Claude Code의 AI 모델을 설정합니다' }, config: {} }
+  const user = { commands: {}, config: {} }
+  const named = buildNamedReverse(new Map([['model', 'Set the AI model for Claude Code (currently Opus 5.5)']]), bundled, user)
+  expect(originalOf('Claude Code의 AI 모델을 설정합니다(현재 Sonnet 5.5)', named.get('model') ?? new Map())).toBe(
+    'Set the AI model for Claude Code (currently Sonnet 5.5)',
+  )
 })

@@ -111,6 +111,18 @@ test('번역을 끈 뒤에도 스킬 목록에 남은 번역문을 되돌립니�
   expect((await sendListing($, `- help: ${HELP_KO}`)).text).toBe(`- help: ${HELP_EN}`)
 })
 
+test(
+  '다른 명령어와 번역문이 같아도 스킬 목록에서는 그 명령어의 원문으로 되돌립니다',
+  { options: { translate_others: true } },
+  async ($, on) => {
+    setupWorld(on, { store: { dictionary: { commands: { [OTHER_EN]: HELP_KO }, config: {} } } })
+    await describeCommand($, HELP_EN)
+    await describeCommand($, OTHER_EN, OTHER, 'deploy')
+    const result = await sendListing($, `- help: ${HELP_KO}\n- deploy: ${HELP_KO}`)
+    expect(result.text).toBe(`- help: ${HELP_EN}\n- deploy: ${OTHER_EN}`)
+  },
+)
+
 test('번역문이 없으면 스킬 목록을 그대로 보냅니다', async ($, on) => {
   setupWorld(on)
   const text = `- clear: ${CLEAR_EN}`
