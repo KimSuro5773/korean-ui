@@ -2,7 +2,7 @@
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
-![version](https://img.shields.io/badge/version-0.1.1-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.1.2-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
   <img src="assets/menu-before.png" width="720" alt="번역 전: 명령어 설명이 영어로 표시된 / 메뉴"><br>
