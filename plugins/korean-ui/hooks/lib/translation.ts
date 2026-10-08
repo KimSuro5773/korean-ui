@@ -479,8 +479,13 @@ export function withFailures(
 }
 
 // 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.
-export function buildReverse(bundled: Dictionary, user: Dictionary): Map<string, string> {
-  const reverse = new Map<string, string>()
+// retired(이번 로드 동안 사전에서 빠진 번역문)도 넣되, 같은 번역문이 지금 사전에 있으면 지금 사전의 원문을 씁니다.
+export function buildReverse(
+  bundled: Dictionary,
+  user: Dictionary,
+  retired: ReadonlyMap<string, string> = new Map(),
+): Map<string, string> {
+  const reverse = new Map<string, string>(retired)
   for (const dictionary of [user, bundled]) {
     for (const [source, translated] of Object.entries(dictionary.commands)) reverse.set(translated, source)
   }
@@ -489,15 +494,20 @@ export function buildReverse(bundled: Dictionary, user: Dictionary): Map<string,
 
 // 명령어 이름마다, 그 명령어의 번역문으로만 영어 원문을 찾는 표를 만듭니다.
 // described는 command.describe에서 받은 명령어 이름과 영어 설명입니다. 다른 명령어와 번역문이 같아도 자기 원문을 찾게 합니다.
+// 그 명령어의 원문에 대한 지운 번역문(retired)도 넣습니다.
 export function buildNamedReverse(
   described: ReadonlyMap<string, string>,
   bundled: Dictionary,
   user: Dictionary,
+  retired: ReadonlyMap<string, string> = new Map(),
 ): Map<string, Map<string, string>> {
   const named = new Map<string, Map<string, string>>()
   for (const [name, source] of described) {
     const { base } = splitState(source)
     const reverse = new Map<string, string>()
+    for (const [translated, retiredSource] of retired) {
+      if (retiredSource === base) reverse.set(translated, base)
+    }
     for (const dictionary of [user, bundled]) {
       const translated = dictionary.commands[base]
       if (Object.hasOwn(dictionary.commands, base) && translated !== undefined) reverse.set(translated, base)
@@ -505,6 +515,17 @@ export function buildNamedReverse(
     named.set(name, reverse)
   }
   return named
+}
+
+// 이번 로드 동안 사용자 번역 사전에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문입니다. 키는 번역문, 값은 영어 원문입니다.
+// Claude Code가 이전에 만든 스킬 목록을 다시 보내도 영어 원문으로 되돌릴 수 있도록 메모리에만 둡니다.
+export type Retired = Map<string, string>
+
+// 사전이 바뀌기 전과 후를 비교해서, 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문을 retired에 더합니다.
+export function retireRemoved(retired: Retired, before: Dictionary, after: Dictionary): void {
+  for (const [source, translated] of Object.entries(before.commands)) {
+    if (after.commands[source] !== translated) retired.set(translated, source)
+  }
 }
 
 const SHOWN_STATE = /^(.*)\(현재 (.+)\)$/

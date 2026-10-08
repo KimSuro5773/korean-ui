@@ -1,6 +1,19 @@
 import { expect, test, type Engine } from 'claude-code/testing'
 import { MESSAGES } from '../hooks/lib/translation.ts'
-import { BUILTIN, CLEAR_EN, CLEAR_KO, VERSION, answer, describeCommand, setupWorld } from './helpers.ts'
+import {
+  BUILTIN,
+  CLEAR_EN,
+  CLEAR_KO,
+  OTHER,
+  OTHER_EN,
+  OTHER_KO,
+  VERSION,
+  answer,
+  describeCommand,
+  sendListing,
+  setupWorld,
+  type World,
+} from './helpers.ts'
 
 // /korean-ui-reset 명령어를 실행합니다.
 function reset($: Engine) {
@@ -70,4 +83,36 @@ test('건너뛴 문구만 있으면 다시 번역할 수 있게 할지 묻고 �
   expect((await reset($)).text).toBe(`${MESSAGES.resetDone(0, 1)} ${MESSAGES.resetRetranslateHint}`)
   expect(world.questions).toEqual([MESSAGES.resetQuestion(0, 1)])
   expect(world.saved.has('failures')).toBe(false)
+})
+
+test('reset으로 지운 번역문이 이전 스킬 목록에 남아 있어도 영어 원문으로 되돌립니다', { options: { translate_others: true } }, async ($, on) => {
+  setupWorld(on, { store: { dictionary: { commands: { [OTHER_EN]: OTHER_KO }, config: {} } }, askAnswer: remove })
+  expect((await describeCommand($, OTHER_EN, OTHER, 'deploy')).description).toBe(OTHER_KO)
+  await reset($)
+  expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
+})
+
+test('다른 세션이 번역을 지운 뒤 다시 읽어도 이전 스킬 목록의 번역문을 영어 원문으로 되돌립니다', { options: { translate_others: true } }, async ($, on) => {
+  const world = setupWorld(on, { store: { dictionary: { commands: { [OTHER_EN]: OTHER_KO }, config: {} } } })
+  await describeCommand($, OTHER_EN, OTHER, 'deploy')
+  world.saved.delete('dictionary')
+  await $.command.run({ command: 'korean-ui-translate', args: '' })
+  expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
+})
+
+test('번역을 저장하며 합칠 때 다른 세션이 지운 번역문도 영어 원문으로 되돌립니다', { options: { translate_others: true } }, async ($, on) => {
+  const world: World = setupWorld(on, {
+    store: { dictionary: { commands: { [OTHER_EN]: OTHER_KO }, config: {} } },
+    replies: [
+      () => {
+        world.saved.delete('dictionary')
+        return answer({ '1': CLEAR_KO })
+      },
+    ],
+  })
+  await describeCommand($, OTHER_EN, OTHER, 'deploy')
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await $.command.run({ command: 'korean-ui-translate', args: '' })
+  expect(world.saved.get('dictionary')).toEqual({ commands: { [CLEAR_EN]: CLEAR_KO }, config: {} })
+  expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
 })

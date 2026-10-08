@@ -5,6 +5,7 @@ import {
   type FailedItem,
   type Failures,
   type Kind,
+  type Retired,
   type Seen,
   type Settings,
   KINDS,
@@ -34,6 +35,7 @@ import {
   recordSeen,
   rejectAll,
   restoreListing,
+  retireRemoved,
   skippedCount,
   skippedText,
   splitSkipped,
@@ -56,10 +58,12 @@ const NOTICE_DELAY_MS = 1500
 
 // 처음 필요할 때 한 번 읽어 두는 값입니다. notified는 이미 알린 문구의 목록입니다.
 // user와 notified는 다른 세션이 바꿀 수 있으므로, 번역하거나 알림을 띄우기 직전에 저장소에서 다시 읽습니다.
+// retired는 user에서 빠진 이전 번역문으로, 스킬 목록을 되돌릴 때만 씁니다.
 type Loaded = {
   bundled: Dictionary
   user: Dictionary
   notified: Set<string>
+  retired: Retired
 }
 
 // 플러그인이 한 번 로드된 동안 유지하는 상태입니다. /config 값을 바꾸면 플러그인이 다시 로드되어 새로 만들어집니다.
@@ -125,8 +129,8 @@ export const register: Register = (on, options) => {
     const loaded = await ensureLoaded($, state)
     const result = restoreListing(
       e.text,
-      buildReverse(loaded.bundled, loaded.user),
-      buildNamedReverse(state.described, loaded.bundled, loaded.user),
+      buildReverse(loaded.bundled, loaded.user, loaded.retired),
+      buildNamedReverse(state.described, loaded.bundled, loaded.user, loaded.retired),
     )
     if (result.restored > 0) {
       $.ui.log(
@@ -195,7 +199,12 @@ function ensureLoaded($: EngineInterface, state: State): Promise<Loaded> {
 
 // 기본 번역표, 사용자 번역 사전, 알림 기록을 읽고 상태에 보관합니다.
 async function loadAll($: EngineInterface, state: State): Promise<Loaded> {
-  const loaded: Loaded = { bundled: await readBundled($), user: await readUser($), notified: await readNotified($) }
+  const loaded: Loaded = {
+    bundled: await readBundled($),
+    user: await readUser($),
+    notified: await readNotified($),
+    retired: new Map(),
+  }
   state.loaded = loaded
   return loaded
 }
@@ -234,7 +243,9 @@ async function readNotified($: EngineInterface): Promise<Set<string>> {
 // 읽지 못하면 사본을 그대로 씁니다.
 async function refreshUser($: EngineInterface, loaded: Loaded): Promise<void> {
   try {
-    loaded.user = parseDictionary(await $.store.get(STORE_DICTIONARY))
+    const latest = parseDictionary(await $.store.get(STORE_DICTIONARY))
+    retireRemoved(loaded.retired, loaded.user, latest)
+    loaded.user = latest
   } catch (error) {
     $.ui.log(`사용자 번역 사전을 다시 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
   }
@@ -420,6 +431,7 @@ async function saveTranslations(
   const latest = parseDictionary(await $.store.get(STORE_DICTIONARY))
   const merged = withTranslations(latest, kind, accepted)
   await $.store.set(STORE_DICTIONARY, merged)
+  retireRemoved(loaded.retired, loaded.user, merged)
   loaded.user = merged
 }
 
@@ -469,7 +481,9 @@ async function runReset($: EngineInterface, state: State): Promise<string> {
   } catch (error) {
     $.ui.log(`실패 횟수를 지우지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
   }
-  loaded.user = emptyDictionary()
+  const cleared = emptyDictionary()
+  retireRemoved(loaded.retired, loaded.user, cleared)
+  loaded.user = cleared
   $.ui.invalidate('command.describe')
   $.ui.invalidate('config.describe')
   const done = MESSAGES.resetDone(translations, skipped)

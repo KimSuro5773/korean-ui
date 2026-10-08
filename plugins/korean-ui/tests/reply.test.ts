@@ -8,6 +8,7 @@ import {
   protectedTokens,
   reasonText,
   restoreListing,
+  retireRemoved,
   validateReply,
 } from '../hooks/lib/translation.ts'
 
@@ -205,4 +206,34 @@ test('originalOf는 when_to_use 앞에 맞는 번역문이 여러 개이면 가�
     ['설명합니다 - 자세히', 'Explain in detail'],
   ])
   expect(originalOf('설명합니다 - 자세히 - When asked', reverse)).toBe('Explain in detail - When asked')
+})
+
+test('retireRemoved는 사전에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문을 모읍니다', () => {
+  const retired = new Map<string, string>()
+  retireRemoved(
+    retired,
+    { commands: { A: '가', B: '나', C: '다' }, config: { T: '테' } },
+    { commands: { A: '가', B: '새 나' }, config: {} },
+  )
+  expect([...retired].sort()).toEqual([
+    ['나', 'B'],
+    ['다', 'C'],
+  ])
+})
+
+test('buildReverse와 buildNamedReverse는 지운 번역문으로도 원문을 찾고, 같은 번역문이면 지금 사전을 우선합니다', () => {
+  const bundled = { commands: { A: '가' }, config: {} }
+  const user = { commands: { B: '나' }, config: {} }
+  const retired = new Map([
+    ['예전 나', 'B'],
+    ['가', 'Z'],
+  ])
+  const reverse = buildReverse(bundled, user, retired)
+  expect(reverse.get('예전 나')).toBe('B')
+  expect(reverse.get('가')).toBe('A')
+  const named = buildNamedReverse(new Map([['b', 'B']]), bundled, user, retired)
+  expect([...(named.get('b') ?? new Map())].sort()).toEqual([
+    ['나', 'B'],
+    ['예전 나', 'B'],
+  ])
 })
