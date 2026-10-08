@@ -48,6 +48,10 @@ export type WorldOptions = {
   // $.ui.ask에 돌려줄 답입니다. 정하지 않거나 null이면 대화상자를 닫은 것처럼 거부합니다.
   askAnswer?: string | null
   storeDeleteFails?: boolean
+  // 이 키를 지울 때만 실패합니다.
+  storeDeleteFailsFor?: string[]
+  // 저장소에서 값을 읽기 직전에 실행합니다. 그사이 다른 세션이 값을 저장하는 상황을 만들 때 씁니다.
+  onStoreGet?: (key: string) => void
   writeFails?: boolean
   // $.session.cwd가 돌려줄 작업 폴더입니다. 정하지 않으면 '/work'입니다.
   cwd?: string
@@ -83,14 +87,17 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     world.written.push({ path: e.path, text: e.text })
     return { value: undefined }
   })
-  on('store.get', ($, e) => ({ value: world.saved.get(e.key) }))
+  on('store.get', ($, e) => {
+    options.onStoreGet?.(e.key)
+    return { value: world.saved.get(e.key) }
+  })
   on('store.set', ($, e) => {
     if (options.storeSetFails === true || options.storeSetFailsFor?.includes(e.key) === true) return { deny: 'store is full' }
     world.saved.set(e.key, e.value)
     return { value: undefined }
   })
   on('store.delete', ($, e) => {
-    if (options.storeDeleteFails === true) return { deny: 'store is locked' }
+    if (options.storeDeleteFails === true || options.storeDeleteFailsFor?.includes(e.key) === true) return { deny: 'store is locked' }
     world.saved.delete(e.key)
     return { value: undefined }
   })

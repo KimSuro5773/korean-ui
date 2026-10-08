@@ -55,23 +55,23 @@ export const MESSAGES = {
     unparsable: '응답을 읽을 수 없음',
     emptyReply: '응답이 비어 있음',
   },
-  skipped: (count: number) => `3번 실패해서 건너뛴 문구가 ${count}개 있습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
+  skipped: (count: number) => `이번 실행에서는 3번 실패한 문구 ${count}개를 건너뛰었습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
   resetDescription: 'Haiku로 번역해서 저장한 문구를 모두 지웁니다',
   resetNothing: '지울 번역이 없습니다.',
   resetChoices: { remove: '지우기', retranslate: '지우고 다시 번역', cancel: '취소' },
   resetQuestion: (translations: number, skipped: number): string => {
-    if (translations === 0) return `3번 실패해서 건너뛴 문구 ${skipped}개를 다시 번역할 수 있게 할까요?`
-    const lead = `기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 ${translations}개를 모두`
-    if (skipped === 0) return `${lead} 지울까요?`
-    return `${lead} 지우고, 3번 실패해서 건너뛴 문구 ${skipped}개도 다시 번역할 수 있게 할까요?`
+    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지워서 다음 번역 때 다시 시도하게 할까요?`
+    const lead = `기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 ${translations}개`
+    if (skipped === 0) return `${lead}를 모두 지울까요?`
+    return `${lead}와 3번 실패한 문구의 기록 ${skipped}개를 모두 지울까요?`
   },
-  resetDone: (translations: number, skipped: number): string =>
-    [
-      translations > 0 ? `Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : '',
-      skipped > 0 ? `3번 실패해서 건너뛴 문구 ${skipped}개를 다시 번역할 수 있게 했습니다.` : '',
-    ]
-      .filter((part) => part !== '')
-      .join(' '),
+  resetDone: (translations: number, skipped: number): string => {
+    const retry = '건너뛰던 문구는 다음 번역 때 다시 시도합니다.'
+    if (skipped === 0) return translations > 0 ? `Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : ''
+    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+    return `Haiku로 번역한 문구 ${translations}개와 3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+  },
+  resetFailuresKept: (reason: string) => `3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: ${reason}.`,
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
   resetFailed: (reason: string) => `번역을 지우지 못했습니다. 원인: ${reason}. 기존 번역은 그대로 남아 있습니다.`,

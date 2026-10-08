@@ -319,13 +319,14 @@ function scheduleNotice($: EngineInterface, state: State): void {
 // 아직 알리지 않은 미번역 문구가 있으면 알림을 표시하고, 알린 문구를 저장합니다.
 // 다른 세션이 그사이 번역하거나 알린 문구, 3번 실패해서 건너뛴 문구는 알리지 않도록 저장소를 다시 읽습니다.
 // 사람이 입력창 앞에 없는 실행(-p, SDK)에서는 알림을 띄우지도, 기록하지도 않습니다.
+// 알림 기록은 저장하기 직전에 가장 마지막으로 읽어서, 그사이 다른 세션이 저장한 기록을 덮어쓰지 않게 합니다.
 async function showNotice($: EngineInterface, state: State): Promise<void> {
   const loaded = state.loaded
   if (loaded === undefined || state.interactive === false) return
   await refreshUser($, loaded)
-  await refreshNotified($, loaded)
   const failures = await readFailures($, await readVersion($))
   const { pending } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
+  await refreshNotified($, loaded)
   const keys = KINDS.flatMap((kind) => pending[kind].map((source) => noticeKey(kind, source)))
   const fresh = keys.filter((key) => !loaded.notified.has(key))
   if (fresh.length === 0) return
@@ -457,6 +458,7 @@ async function runExport($: EngineInterface, state: State): Promise<string> {
 
 // Haiku로 번역한 문구와 실패 횟수를, 사용자에게 확인을 받은 뒤 저장소에서 지웁니다. 기본 번역표와 알림 기록은 지우지 않습니다.
 // '지우고 다시 번역'을 고르면 지운 뒤 번역 명령어와 같은 번역을 실행합니다. 대화상자를 닫거나 띄울 수 없으면 취소로 봅니다.
+// 실패 횟수만 지우지 못하면, 건너뛰던 문구를 다시 시도한다고 하지 않고 기록이 남았다고 알려 줍니다.
 async function runReset($: EngineInterface, state: State): Promise<string> {
   const loaded = await ensureLoaded($, state)
   await refreshUser($, loaded)
@@ -476,17 +478,20 @@ async function runReset($: EngineInterface, state: State): Promise<string> {
   } catch (error) {
     return MESSAGES.resetFailed(messageOf(error))
   }
+  let failuresKept: string | undefined
   try {
     await $.store.delete(STORE_FAILURES)
   } catch (error) {
-    $.ui.log(`실패 횟수를 지우지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    failuresKept = MESSAGES.resetFailuresKept(messageOf(error))
   }
   const cleared = emptyDictionary()
   retireRemoved(loaded.retired, loaded.user, cleared)
   loaded.user = cleared
   $.ui.invalidate('command.describe')
   $.ui.invalidate('config.describe')
-  const done = MESSAGES.resetDone(translations, skipped)
+  const done = [MESSAGES.resetDone(translations, failuresKept === undefined ? skipped : 0), failuresKept ?? '']
+    .filter((part) => part !== '')
+    .join(' ')
   if (answer === remove) return `${done} ${MESSAGES.resetRetranslateHint}`
   return `${done}\n${await runTranslate($, state)}`
 }

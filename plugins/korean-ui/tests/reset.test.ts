@@ -116,3 +116,23 @@ test('번역을 저장하며 합칠 때 다른 세션이 지운 번역문도 영
   expect(world.saved.get('dictionary')).toEqual({ commands: { [CLEAR_EN]: CLEAR_KO }, config: {} })
   expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
 })
+
+test('실패 기록만 지우지 못하면 다시 시도한다고 하지 않고 기록이 남았다고 알려 줍니다', async ($, on) => {
+  const world = setupWorld(on, {
+    store: { dictionary: TWO, failures: SKIPPED_ONE },
+    askAnswer: remove,
+    storeDeleteFailsFor: ['failures'],
+  })
+  const text = (await reset($)).text ?? ''
+  expect(text.startsWith(`${MESSAGES.resetDone(2, 0)} 3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인:`)).toBe(true)
+  expect(text.endsWith(MESSAGES.resetRetranslateHint)).toBe(true)
+  expect(world.saved.has('dictionary')).toBe(false)
+  expect(world.saved.get('failures')).toEqual(SKIPPED_ONE)
+})
+
+test('실패 기록만 있을 때 지우지 못하면 기록이 남았다고 알려 줍니다', async ($, on) => {
+  const world = setupWorld(on, { store: { failures: SKIPPED_ONE }, askAnswer: remove, storeDeleteFailsFor: ['failures'] })
+  const text = (await reset($)).text ?? ''
+  expect(text.startsWith('3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인:')).toBe(true)
+  expect(world.saved.get('failures')).toEqual(SKIPPED_ONE)
+})

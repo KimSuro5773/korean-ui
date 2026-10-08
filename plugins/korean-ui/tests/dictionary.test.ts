@@ -209,7 +209,7 @@ test('failedListText는 이번 실행에서 3번째로 실패한 원문에 표�
 
 test('skippedText는 건너뛴 문구가 있을 때만 안내 문장을 만듭니다', () => {
   expect(skippedText(0)).toBe('')
-  expect(skippedText(4)).toBe('\n3번 실패해서 건너뛴 문구가 4개 있습니다. 플러그인이 업데이트되면 다시 번역합니다.')
+  expect(skippedText(4)).toBe('\n이번 실행에서는 3번 실패한 문구 4개를 건너뛰었습니다. 플러그인이 업데이트되면 다시 번역합니다.')
 })
 
 test('versionOf는 plugin.json에서 버전을 꺼내고, 꺼낼 수 없으면 undefined를 돌려줍니다', () => {
@@ -264,20 +264,27 @@ test('parseNotified는 문자열이 아닌 값을 버립니다', () => {
 test('resetQuestion은 지울 번역과 건너뛴 문구의 수에 따라 질문을 만듭니다', () => {
   expect(MESSAGES.resetQuestion(39, 0)).toBe('기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 39개를 모두 지울까요?')
   expect(MESSAGES.resetQuestion(39, 2)).toBe(
-    '기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 39개를 모두 지우고, 3번 실패해서 건너뛴 문구 2개도 다시 번역할 수 있게 할까요?',
+    '기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 39개와 3번 실패한 문구의 기록 2개를 모두 지울까요?',
   )
-  expect(MESSAGES.resetQuestion(0, 2)).toBe('3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 할까요?')
+  expect(MESSAGES.resetQuestion(0, 2)).toBe('3번 실패한 문구의 기록 2개를 지워서 다음 번역 때 다시 시도하게 할까요?')
 })
 
 test('resetDone은 지운 번역과 다시 번역할 수 있게 한 문구를 알려 줍니다', () => {
   expect(MESSAGES.resetDone(39, 0)).toBe('Haiku로 번역한 문구 39개를 지웠습니다.')
-  expect(MESSAGES.resetDone(0, 2)).toBe('3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 했습니다.')
+  expect(MESSAGES.resetDone(0, 2)).toBe('3번 실패한 문구의 기록 2개를 지웠습니다. 건너뛰던 문구는 다음 번역 때 다시 시도합니다.')
   expect(MESSAGES.resetDone(39, 2)).toBe(
-    'Haiku로 번역한 문구 39개를 지웠습니다. 3번 실패해서 건너뛴 문구 2개를 다시 번역할 수 있게 했습니다.',
+    'Haiku로 번역한 문구 39개와 3번 실패한 문구의 기록 2개를 지웠습니다. 건너뛰던 문구는 다음 번역 때 다시 시도합니다.',
   )
+  expect(MESSAGES.resetDone(0, 0)).toBe('')
 })
 
 test('countEntries는 명령어 설명과 설정 항목의 번역문 수를 더합니다', () => {
   expect(countEntries({ commands: { A: '가', B: '나' }, config: { T: '테' } })).toBe(3)
   expect(countEntries(EMPTY)).toBe(0)
+})
+
+test('resetFailuresKept는 실패 기록을 지우지 못했다고 원인과 함께 알려 줍니다', () => {
+  expect(MESSAGES.resetFailuresKept('store is locked')).toBe(
+    '3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: store is locked.',
+  )
 })

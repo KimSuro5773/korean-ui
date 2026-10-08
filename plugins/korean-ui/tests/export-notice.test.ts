@@ -15,6 +15,7 @@ import {
   describeConfig,
   setupWorld,
   startSession,
+  type World,
 } from './helpers.ts'
 
 // /korean-ui-translate export를 실행합니다.
@@ -143,4 +144,15 @@ test('-p 실행에서는 미번역 알림을 띄우지 않고 기록도 남기�
   await world.clock.advance(1500)
   expect(world.toasts).toEqual([])
   expect(world.saved.get('notified')).toBeUndefined()
+})
+
+test('알림 기록은 실패 기록을 읽는 동안 다른 세션이 저장한 기록과도 합쳐서 저장합니다', async ($, on) => {
+  const world: World = setupWorld(on, {
+    onStoreGet: (key) => {
+      if (key === 'failures') world.saved.set('notified', ['commands:Noticed by another session'])
+    },
+  })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await world.clock.advance(1500)
+  expect(world.saved.get('notified')).toEqual(['commands:Noticed by another session', `commands:${CLEAR_EN}`])
 })
