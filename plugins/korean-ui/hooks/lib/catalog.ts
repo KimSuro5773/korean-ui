@@ -3,12 +3,15 @@
 import {
   BUILTIN_PROVIDER,
   KINDS,
+  MESSAGES,
   isSkipped,
   noticeKey,
   type Dictionary,
   type Failures,
   type Kind,
+  type Layers,
   type Seen,
+  type Settings,
 } from './translation.ts'
 
 // 종류별 원문 목록입니다. 제공자 하나가 쓰는 원문을 가리킬 때 씁니다.
@@ -87,4 +90,74 @@ export function withoutFailures(failures: Failures, sources: SourceSet): Failure
     for (const source of sources[kind]) delete counts[noticeKey(kind, source)]
   }
   return { version: failures.version, counts }
+}
+
+// 원문 하나의 번역 상태입니다. override는 고친 번역, bundled는 기본 번역표, auto는 자동 번역이 표시되는 원문입니다.
+// skipped는 번역문이 없고 3번 이상 실패해서 건너뛰는 원문, untranslated는 그 밖의 번역문이 없는 원문입니다.
+export type SourceState = 'override' | 'bundled' | 'auto' | 'skipped' | 'untranslated'
+
+// 원문 하나의 번역 상태를 번역문을 찾는 순서대로 판정합니다.
+export function stateOf(layers: Layers, failures: Failures | undefined, kind: Kind, source: string): SourceState {
+  if (Object.hasOwn(layers.overrides[kind], source)) return 'override'
+  if (Object.hasOwn(layers.bundled[kind], source)) return 'bundled'
+  if (Object.hasOwn(layers.user[kind], source)) return 'auto'
+  return isSkipped(failures, kind, source) ? 'skipped' : 'untranslated'
+}
+
+// 제공자 하나의 번역 현황입니다. total은 그 제공자가 쓰는 원문의 수이고, 나머지는 번역 상태별 원문의 수입니다.
+export type ProviderRow = { provider: string; total: number } & Record<SourceState, number>
+
+// 제공자별 번역 현황을 providersOf와 같은 순서로 만듭니다. 여러 제공자가 쓰는 원문은 각 제공자에 모두 셉니다.
+export function providerRows(seen: Seen, layers: Layers, failures: Failures | undefined): ProviderRow[] {
+  const rows = new Map<string, ProviderRow>()
+  for (const provider of providersOf(seen)) {
+    rows.set(provider, { provider, total: 0, override: 0, bundled: 0, auto: 0, skipped: 0, untranslated: 0 })
+  }
+  for (const kind of KINDS) {
+    for (const [source, entry] of seen[kind]) {
+      const state = stateOf(layers, failures, kind, source)
+      for (const provider of entry.providers) {
+        const row = rows.get(provider)
+        if (row === undefined) continue
+        row.total += 1
+        row[state] += 1
+      }
+    }
+  }
+  return [...rows.values()]
+}
+
+// 자동 번역이나 고친 번역에 저장되어 있지만 이번 세션에서 확인하지 못한 원문의 수를 셉니다.
+// 두 사전에 모두 있는 원문은 한 번만 셉니다.
+export function unseenStored(seen: Seen, layers: Layers): number {
+  let count = 0
+  for (const kind of KINDS) {
+    const stored = new Set([...Object.keys(layers.user[kind]), ...Object.keys(layers.overrides[kind])])
+    for (const source of stored) {
+      if (!seen[kind].has(source)) count += 1
+    }
+  }
+  return count
+}
+
+// /korean-ui-status가 보여 줄 글을 만듭니다. 버전과 설정, 제공자별 번역 현황 표, 확인하지 못한 저장 번역의 수를 차례로 담습니다.
+// 확인한 문구가 없으면 표 대신 안내를 넣고, 확인하지 못한 저장 번역이 없으면 그 줄을 넣지 않습니다.
+export function statusText(
+  version: string | undefined,
+  settings: Settings,
+  rows: readonly ProviderRow[],
+  unseen: number,
+): string {
+  const lines = [version === undefined ? MESSAGES.statusName : `${MESSAGES.statusName} ${version}`, MESSAGES.statusSettings(settings), '']
+  if (rows.length === 0) {
+    lines.push(MESSAGES.statusNothingSeen)
+  } else {
+    lines.push(`| ${MESSAGES.statusColumns.join(' | ')} |`, `|${MESSAGES.statusColumns.map(() => '---').join('|')}|`)
+    for (const row of rows) {
+      const cells = [row.provider, row.total, row.bundled, row.auto, row.override, row.untranslated, row.skipped]
+      lines.push(`| ${cells.join(' | ')} |`)
+    }
+  }
+  if (unseen > 0) lines.push('', MESSAGES.statusUnseen(unseen))
+  return lines.join('\n')
 }

@@ -95,6 +95,15 @@ export const MESSAGES = {
   resetFailuresKept: (reason: string) => `3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: ${reason}.`,
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
+  statusDescription: '번역 현황을 제공자별로 표시합니다',
+  statusName: 'korean-ui',
+  statusSettings: (settings: Settings): string => {
+    const onOff = (value: boolean) => (value ? '켜짐' : '꺼짐')
+    return `설정: 기본 항목 번역 ${onOff(settings.translateBuiltin)}, 다른 플러그인과 스킬 번역 ${onOff(settings.translateOthers)}, 미번역 알림 ${onOff(settings.notifyUntranslated)}`
+  },
+  statusColumns: ['제공자', '문구', '기본 번역표', '자동 번역', '고친 번역', '미번역', '건너뜀'],
+  statusNothingSeen: '아직 확인한 문구가 없습니다. 입력창에 /를 입력해 명령어 목록을 한 번 연 뒤 다시 실행하세요.',
+  statusUnseen: (count: number) => `이번 세션에서 확인하지 못한 저장 번역: ${count}개`,
   resetFailed: (reason: string) => `번역을 지우지 못했습니다. 원인: ${reason}. 기존 번역은 그대로 남아 있습니다.`,
 } as const
 

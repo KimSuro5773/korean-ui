@@ -5,9 +5,12 @@ import {
   countStored,
   hasFailures,
   matchProvider,
+  providerRows,
   providersOf,
   restrictTo,
   sourcesOf,
+  statusText,
+  unseenStored,
   withoutFailures,
   withoutSources,
 } from './lib/catalog.ts'
@@ -132,6 +135,11 @@ export const register: Register = (on, options) => {
     } catch (error) {
       $.ui.log(`번역 지우기 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
+    try {
+      await $.command.register({ name: 'korean-ui-status', description: MESSAGES.statusDescription })
+    } catch (error) {
+      $.ui.log(`상태 확인 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    }
     $.ui.invalidate('command.describe')
     $.ui.invalidate('config.describe')
     return next(e)
@@ -190,6 +198,9 @@ export const register: Register = (on, options) => {
   // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다.
   // 인자로 제공자 이름을 받으면 그 제공자의 번역만 지웁니다.
   on('command.run', { command: 'korean-ui-reset' }, async ($, e) => ({ text: await runReset($, state, e.args.trim()) }))
+
+  // /korean-ui-status를 실행했을 때의 처리입니다. Haiku를 호출하지 않고 번역 현황을 보여 줍니다. 인자는 쓰지 않습니다.
+  on('command.run', { command: 'korean-ui-status' }, async ($) => ({ text: await runStatus($, state) }))
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
@@ -524,6 +535,19 @@ async function runExport($: EngineInterface, state: State): Promise<string> {
     return MESSAGES.exportFailed(messageOf(error), path)
   }
   return MESSAGES.exported(path, result.missing)
+}
+
+// 번역 현황을 보여 줄 글을 만듭니다. 명령어 목록과 /config 목록을 한 번 읽어 원문을 모은 뒤,
+// 제공자별로 기본 번역표, 자동 번역, 고친 번역, 미번역, 건너뛰는 문구의 수를 셉니다.
+// 다른 세션이 저장한 번역도 세도록 저장소를 다시 읽습니다.
+async function runStatus($: EngineInterface, state: State): Promise<string> {
+  await collectSources($)
+  const loaded = await ensureLoaded($, state)
+  await refreshStored($, loaded)
+  const version = await readVersion($)
+  const failures = await readFailures($, version)
+  const layers = layersOf(loaded)
+  return statusText(version, state.settings, providerRows(state.seen, layers, failures), unseenStored(state.seen, layers))
 }
 
 // /korean-ui-reset을 실행했을 때의 처리입니다. 인자가 없으면 Haiku로 번역한 문구를 모두 지우고,

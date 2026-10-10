@@ -28,12 +28,13 @@ function run($: Engine, args = '') {
 
 const CLEAR_KEY = `commands:${CLEAR_EN}`
 
-test('세션이 시작되면 번역 명령어와 번역 지우기 명령어를 등록합니다', async ($, on) => {
+test('세션이 시작되면 세 명령어를 등록합니다', async ($, on) => {
   const world = setupWorld(on)
   await startSession($)
   expect(world.registered).toEqual([
     { name: 'korean-ui-translate', description: MESSAGES.commandDescription },
     { name: 'korean-ui-reset', description: MESSAGES.resetDescription, argumentHint: '[플러그인]' },
+    { name: 'korean-ui-status', description: MESSAGES.statusDescription },
   ])
 })
 
