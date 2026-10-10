@@ -2,7 +2,7 @@
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
-![version](https://img.shields.io/badge/version-0.1.2-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.2.0-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
   <img src="assets/menu-before.png" width="720" alt="번역 전: 명령어 설명이 영어로 표시된 / 메뉴"><br>
@@ -80,6 +80,20 @@ Claude Code 기본 항목은 설치하자마자 한국어로 표시됩니다. �
 - 영어 원문이 바뀐 항목은 다시 번역되지 않은 상태가 됩니다. 그래서 이전 문구를 옮긴 번역이 잘못 표시되지 않습니다.
 - Haiku가 번역한 문구를 모두 지우려면 `/korean-ui-reset`을 실행합니다. 확인 대화상자에서 지운 뒤 바로 다시 번역할 수도 있으며, 기본 번역표의 번역은 지워지지 않습니다.
 
+### 번역 고치기, 일부만 지우기, 현황 보기
+
+| 하고 싶은 일 | 명령어 |
+|---|---|
+| 번역 하나를 고치거나 한 플러그인만 번역하기 | `/korean-ui-translate <요청>` |
+| 한 플러그인의 번역만 지우기 | `/korean-ui-reset <플러그인>` |
+| 번역 현황 보기 | `/korean-ui-status` |
+
+- `/korean-ui-translate /help 설명을 더 짧게 고쳐 줘`처럼 원하는 것을 문장으로 쓰면, Haiku가 요청에 해당하는 문구만 골라서 번역합니다. 이미 번역된 문구를 바꿀 때는 대상을 보여 주고 확인을 받습니다.
+- 요청으로 고친 번역은 기본 번역표의 번역보다 먼저 표시되므로, Claude Code 기본 명령어의 번역도 고칠 수 있습니다.
+- `/korean-ui-reset <플러그인>`에 쓰는 이름은 `/korean-ui-status`에 표시되는 이름이며, 기본 항목은 `claude-code`입니다.
+
+명령어별 자세한 사용법은 [명령어 목록과 사용법](plugins/korean-ui/COMMANDS.md)을 참고하세요.
+
 
 > [!TIP]
 > "번역되지 않은 문구가 N개 있습니다"라는 알림이 보이면 `/korean-ui-translate`를 한 번 실행합니다. 주로 새 플러그인을 설치했거나 Claude Code가 업데이트된 뒤에 나타납니다.
@@ -107,7 +121,7 @@ claude plugin update korean-ui@korean-ui
 |---|---|
 | 플러그인 파일 | `~/.claude/plugins/cache/korean-ui/korean-ui/<버전>/` |
 | 마켓플레이스 사본 | `~/.claude/plugins/marketplaces/korean-ui/` |
-| `/korean-ui-translate`로 번역한 문구, 미번역 알림을 이미 표시한 문구 목록, 번역에 실패한 횟수 | `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 JSON 파일 |
+| `/korean-ui-translate`로 번역한 문구, 요청으로 고친 문구, 미번역 알림을 이미 표시한 문구 목록, 번역에 실패한 횟수 | `~/.claude/plugins/store/` 폴더에서 이름이 `korean-ui_korean-ui-`로 시작하는 JSON 파일 |
 | `/config`에서 정한 설정 값 | `~/.claude/settings.json`의 `pluginConfigs` 항목 |
 
 번역한 문구를 담은 JSON 파일은 30일 동안 어떤 세션에서도 사용하지 않으면 **Claude Code가 자동으로 삭제합니다.** 이 기간은 Claude Code의 `cleanupPeriodDays` 설정을 따릅니다.
@@ -142,6 +156,10 @@ Claude Code에서 다음 두 줄을 입력합니다.
 **Q. 번역이 표시되지 않아요.**
 
 mods가 꺼져 있으면 이 플러그인이 동작하지 않습니다. `disableAllHooks` 설정을 켰거나 `--safe-mode`, `--bare`로 실행했는지 확인합니다. Claude Code가 업데이트되어 mods의 기능이 바뀐 경우에도 번역이 표시되지 않을 수 있으니, 플러그인의 새 버전이 있는지 확인합니다.
+
+**Q. 번역 하나가 마음에 들지 않아요.**
+
+`/korean-ui-translate /명령어 설명을 더 자연스럽게 고쳐 줘`처럼 요청하면 그 문구만 다시 번역합니다. 플러그인에 들어 있는 기본 번역표의 번역도 이 방법으로 고칠 수 있습니다. 고친 번역을 지워서 원래대로 돌리려면 `/korean-ui-reset <플러그인>`을 실행하는데, 이때 그 플러그인의 다른 Haiku 번역도 함께 지워집니다. 자세한 사용법은 [명령어 목록과 사용법](plugins/korean-ui/COMMANDS.md)에 있습니다.
 
 **Q. `/config`의 선택지 값이나 명령어 뒤의 `[key=value ...]`는 왜 영어인가요?**
 
