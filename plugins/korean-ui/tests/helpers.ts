@@ -24,13 +24,17 @@ export const PLUGIN_JSON = JSON.stringify({ name: 'korean-ui', version: VERSION 
 
 type Provider = { plugin: string; tier: string }
 
-// 가짜 응답이 받은 값을 모아 두는 곳입니다. 테스트에서 저장, 알림, 파일 쓰기, Haiku 요청 내용을 확인할 때 씁니다.
+// 가짜 응답이 받은 값을 모아 두는 곳입니다. 테스트에서 저장, 알림, 상태 줄, 파일 쓰기, Haiku 요청 내용을 확인할 때 씁니다.
 export type World = {
   saved: Map<string, unknown>
   toasts: string[]
+  // $.ui.status로 표시한 문구입니다. 표시를 지우면 undefined가 들어갑니다.
+  statuses: (string | undefined)[]
   logs: string[]
   written: { path: string; text: string }[]
   prompts: string[]
+  // $.model.complete에 prompts와 같은 순서로 보낸 system입니다. system 없이 보냈으면 빈 문자열입니다.
+  systems: string[]
   questions: string[]
   registered: unknown[]
   clock: ReturnType<typeof mock.clock>
@@ -68,9 +72,11 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   const world: World = {
     saved: new Map(Object.entries(options.store ?? {})),
     toasts: [],
+    statuses: [],
     logs: [],
     written: [],
     prompts: [],
+    systems: [],
     questions: [],
     registered: [],
     clock: mock.clock(on),
@@ -114,6 +120,10 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     world.toasts.push(e.text)
     return { value: undefined }
   })
+  on('ui.status', ($, e) => {
+    world.statuses.push(e.text)
+    return { value: undefined }
+  })
   on('ui.log', ($, e) => {
     world.logs.push(e.text)
     return { value: undefined }
@@ -128,6 +138,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   on('session.start', () => ({ cwd: '/work' }))
   on('model.complete', ($, e) => {
     world.prompts.push(String(e.prompt))
+    world.systems.push(String(e.system ?? ''))
     const next = replies.shift()
     if (typeof next === 'function') return (next as () => unknown)()
     return next ?? answer({})

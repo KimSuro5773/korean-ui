@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
+  CONTEXT_HINT,
   buildNamedReverse,
   buildPrompt,
   buildReverse,
@@ -10,7 +11,14 @@ import {
   restoreListing,
   retireRemoved,
   validateReply,
+  type Dictionary,
 } from '../hooks/lib/translation.ts'
+
+// 고친 번역이 없는 세 계층을 만듭니다.
+const layers = (bundled: Dictionary, user: Dictionary) => ({ overrides: { commands: {}, config: {} }, bundled, user })
+
+// 이름과 제공자가 없는 번역 요청 항목을 만듭니다.
+const item = (source: string) => ({ source, names: [], providers: [] })
 
 const CLEAR_EN = 'Start a new session with empty context; previous session stays on disk (resumable with /resume)'
 const CLEAR_KO = '빈 컨텍스트로 새 세션을 시작합니다. 이전 세션은 디스크에 유지됩니다(/resume으로 이어서 진행할 수 있습니다)'
@@ -87,21 +95,50 @@ test('reasonText는 실패 이유를 표시 문구로 바꿉니다', () => {
 })
 
 test('buildPrompt는 번호를 붙인 원문과 응답 형식을 담습니다', () => {
-  const prompt = buildPrompt('commands', ['Show help', 'Exit'])
+  const prompt = buildPrompt('commands', [item('Show help'), item('Exit')])
   expect(prompt).toContain('"id": "1"')
   expect(prompt).toContain('"text": "Show help"')
   expect(prompt).toContain('"id": "2"')
   expect(prompt).toContain('id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요')
-  expect(buildPrompt('config', ['Theme'])).toContain('/config 설정 항목')
+  expect(buildPrompt('config', [item('Theme')])).toContain('/config 설정 항목')
 })
 
 test('buildPrompt는 그대로 둘 부분이 있는 항목에만 keep을 넣습니다', () => {
-  const prompt = buildPrompt('commands', ['Run `npm test` with --watch', 'Exit'])
+  const prompt = buildPrompt('commands', [item('Run `npm test` with --watch'), item('Exit')])
   expect(prompt).toContain('keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.')
   expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
     { id: '1', text: 'Run `npm test` with --watch', keep: ['`npm test`', '--watch'] },
     { id: '2', text: 'Exit' },
   ])
+})
+
+test('buildPrompt는 이름과 제공자를 항목에 넣고, 번역문에 넣지 말라는 안내를 담습니다', () => {
+  const prompt = buildPrompt('commands', [
+    { source: 'toggle verbose', names: ['/verbose'], providers: ['claude-code'] },
+    { source: 'Shared', names: ['/a', '/b', '/c', '/d'], providers: ['p1', 'p2'] },
+  ])
+  expect(prompt).toContain(CONTEXT_HINT)
+  expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
+    { id: '1', text: 'toggle verbose', name: '/verbose', plugin: 'claude-code' },
+    { id: '2', text: 'Shared', name: '/a, /b, /c', plugin: 'p1, p2' },
+  ])
+})
+
+test('buildPrompt는 지시와 지금 번역문이 있으면 요청문에 넣습니다', () => {
+  const prompt = buildPrompt(
+    'commands',
+    [{ source: 'Exit', names: ['/exit'], providers: ['claude-code'], current: '종료합니다' }],
+    '더 짧게',
+  )
+  expect(prompt).toContain('사용자 요청: 더 짧게')
+  expect(prompt).toContain(
+    '요청이 번역 지침과 다르면 요청을 따르세요. 요청 중 대상을 고르는 부분은 이미 처리했으므로 번역 방식에 관한 부분만 따르세요.',
+  )
+  expect(prompt).toContain('current가 있는 항목은 current가 지금 표시 중인 번역문입니다.')
+  expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
+    { id: '1', text: 'Exit', name: '/exit', plugin: 'claude-code', current: '종료합니다' },
+  ])
+  expect(buildPrompt('commands', [item('Exit')])).not.toContain('사용자 요청')
 })
 
 const REVERSE = new Map([
@@ -113,9 +150,22 @@ const HEADER = 'The following skills are available for use with the Skill tool:'
 test('buildReverse는 번역문으로 원문을 찾게 하고 기본 번역표를 우선합니다', () => {
   const bundled = { commands: { A: '가' }, config: { Theme: '테마' } }
   const user = { commands: { B: '나', C: '가' }, config: {} }
-  expect([...buildReverse(bundled, user)].sort()).toEqual([
+  expect([...buildReverse(layers(bundled, user))].sort()).toEqual([
     ['가', 'A'],
     ['나', 'B'],
+  ])
+})
+
+test('buildReverse는 고친 번역의 번역문도 되돌리고, 같은 번역문이면 고친 번역의 원문을 씁니다', () => {
+  const all = {
+    overrides: { commands: { C: '가', D: '라' }, config: {} },
+    bundled: { commands: { A: '가' }, config: {} },
+    user: { commands: { B: '나' }, config: {} },
+  }
+  expect([...buildReverse(all)].sort()).toEqual([
+    ['가', 'C'],
+    ['나', 'B'],
+    ['라', 'D'],
   ])
 })
 
@@ -154,7 +204,7 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
     ['suite', 'Run the test suite'],
   ])
   const text = '- unit: 테스트를 실행합니다\n- suite: 테스트를 실행합니다'
-  expect(restoreListing(text, buildReverse(bundled, user), buildNamedReverse(described, bundled, user))).toEqual({
+  expect(restoreListing(text, buildReverse(layers(bundled, user)), buildNamedReverse(described, layers(bundled, user)))).toEqual({
     text: '- unit: Run tests\n- suite: Run the test suite',
     restored: 2,
     byName: 2,
@@ -165,13 +215,13 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
 test('buildNamedReverse는 명령어마다 자기 번역문으로 원문을 찾고, (현재 …)가 달라도 원문을 찾습니다', () => {
   const bundled = { commands: { 'Set the AI model for Claude Code': 'Claude Code의 AI 모델을 설정합니다' }, config: {} }
   const user = { commands: {}, config: {} }
-  const named = buildNamedReverse(new Map([['model', 'Set the AI model for Claude Code (currently Opus 5.5)']]), bundled, user)
+  const named = buildNamedReverse(new Map([['model', 'Set the AI model for Claude Code (currently Opus 5.5)']]), layers(bundled, user))
   expect(originalOf('Claude Code의 AI 모델을 설정합니다(현재 Sonnet 5.5)', named.get('model') ?? new Map())).toBe(
     'Set the AI model for Claude Code (currently Sonnet 5.5)',
   )
 })
 
-test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체에서 찾은 줄을 나눠 셉니다', () => {
+test('restoreListing은 명령어 이름으로 찾은 줄과 사전 전체에서 찾은 줄을 나눠 셉니다', () => {
   const bundled = {
     commands: {
       'Use when the user asks': '사용자가 요청할 때 사용합니다',
@@ -180,9 +230,9 @@ test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체�
     config: {},
   }
   const user = { commands: {}, config: {} }
-  const named = buildNamedReverse(new Map([['kui:skill', 'Use when the user asks']]), bundled, user)
+  const named = buildNamedReverse(new Map([['kui:skill', 'Use when the user asks']]), layers(bundled, user))
   const text = '- kui:skill: 사용자가 요청할 때 사용합니다\n- model: Claude Code의 AI 모델을 설정합니다'
-  expect(restoreListing(text, buildReverse(bundled, user), named)).toEqual({
+  expect(restoreListing(text, buildReverse(layers(bundled, user)), named)).toEqual({
     text: '- kui:skill: Use when the user asks\n- model: Set the AI model for Claude Code',
     restored: 2,
     byName: 1,
@@ -228,10 +278,10 @@ test('buildReverse와 buildNamedReverse는 지운 번역문으로도 원문을 �
     ['예전 나', 'B'],
     ['가', 'Z'],
   ])
-  const reverse = buildReverse(bundled, user, retired)
+  const reverse = buildReverse(layers(bundled, user), retired)
   expect(reverse.get('예전 나')).toBe('B')
   expect(reverse.get('가')).toBe('A')
-  const named = buildNamedReverse(new Map([['b', 'B']]), bundled, user, retired)
+  const named = buildNamedReverse(new Map([['b', 'B']]), layers(bundled, user), retired)
   expect([...(named.get('b') ?? new Map())].sort()).toEqual([
     ['나', 'B'],
     ['예전 나', 'B'],

@@ -8,6 +8,7 @@ import {
   GUIDE,
   OTHER,
   OTHER_EN,
+  OTHER_KO,
   USAGE,
   VERSION,
   answer,
@@ -27,13 +28,17 @@ function run($: Engine, args = '') {
 
 const CLEAR_KEY = `commands:${CLEAR_EN}`
 
-test('세션이 시작되면 인자 힌트 없이 번역 명령어와 번역 지우기 명령어를 등록합니다', async ($, on) => {
+test('세션이 시작되면 세 명령어를 등록합니다', async ($, on) => {
   const world = setupWorld(on)
   await startSession($)
   expect(world.registered).toEqual([
-    { name: 'korean-ui-translate', description: MESSAGES.commandDescription },
-    { name: 'korean-ui-reset', description: MESSAGES.resetDescription },
+    { name: 'korean-ui-translate', description: MESSAGES.commandDescription, argumentHint: '[요청]' },
+    { name: 'korean-ui-reset', description: MESSAGES.resetDescription, argumentHint: '[플러그인]' },
+    { name: 'korean-ui-status', description: MESSAGES.statusDescription },
   ])
+  expect(MESSAGES.commandDescription).toBe(
+    '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다. 요청을 함께 쓰면 그 요청대로 번역하거나 고칩니다',
+  )
 })
 
 test('미번역 기본 항목을 번역해서 저장하고 요약을 표시합니다', async ($, on) => {
@@ -86,6 +91,19 @@ test('번역을 꺼 둔 다른 플러그인의 문구는 Haiku에게 보내지 �
   await run($)
   expect(world.prompts.length).toBe(1)
   expect(world.prompts[0]).not.toContain(OTHER_EN)
+})
+
+test('Haiku 요청에 명령어 이름과 제공자를 함께 넣습니다', { options: { translate_others: true } }, async ($, on) => {
+  const world = setupWorld(on, { replies: [answer({ '1': OTHER_KO, '2': CLEAR_KO }), answer({ '1': '시험용 설정' })] })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await describeCommand($, OTHER_EN, OTHER, 'deploy')
+  await describeConfig($, 'Sample setting', BUILTIN, 'sample')
+  await run($)
+  expect(world.prompts[0]).toContain('"name": "/deploy"')
+  expect(world.prompts[0]).toContain('"plugin": "other-plugin"')
+  expect(world.prompts[0]).toContain('"name": "/clear"')
+  expect(world.prompts[0]).toContain('"plugin": "claude-code"')
+  expect(world.prompts[1]).toContain('"name": "sample"')
 })
 
 test('Haiku 호출이 실패하면 중단하고, 앞에서 저장한 번역은 유지합니다', async ($, on) => {
@@ -160,11 +178,6 @@ test('번역 결과를 저장하지 못하면 중단하고 원인을 표시합�
   setupWorld(on, { replies: [answer({ '1': CLEAR_KO })], storeSetFails: true })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   expect((await run($)).text).toContain('번역 결과를 저장하지 못해서 번역을 중단했습니다.')
-})
-
-test('알 수 없는 인자를 받으면 사용법을 표시합니다', async ($, on) => {
-  setupWorld(on)
-  expect((await run($, 'help')).text).toBe('사용법: /korean-ui-translate를 인자 없이 실행하면 번역되지 않은 문구를 번역합니다.')
 })
 
 test('같은 문구가 3번 실패하면 다음 실행부터 Haiku에게 보내지 않습니다', async ($, on) => {

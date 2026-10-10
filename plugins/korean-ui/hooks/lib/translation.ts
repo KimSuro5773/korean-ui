@@ -11,6 +11,10 @@ export type Category = 'builtin' | 'others' | 'self'
 // 영어 원문을 키로, 한국어 번역문을 값으로 저장합니다. 명령어 설명과 /config 항목을 나누어 저장합니다.
 export type Dictionary = Record<Kind, Record<string, string>>
 
+// 번역문을 찾는 세 계층입니다. overrides는 요청으로 고친 번역, bundled는 기본 번역표, user는 자동 번역입니다.
+// 번역문은 이 순서로 찾습니다.
+export type Layers = { overrides: Dictionary; bundled: Dictionary; user: Dictionary }
+
 // /config에서 켜고 끄는 세 항목의 값입니다.
 export type Settings = {
   translateBuiltin: boolean
@@ -18,8 +22,12 @@ export type Settings = {
   notifyUntranslated: boolean
 }
 
-// 화면에 표시된 영어 원문과, 그 원문을 누가 제공했는지 기록합니다.
-export type Seen = Record<Kind, Map<string, Category>>
+// 화면에 표시된 영어 원문 하나의 기록입니다. names는 그 원문을 쓰는 명령어 이름('/commit')이나 /config 항목의 key이고,
+// providers는 그 원문을 제공하는 제공자의 표시 이름입니다.
+export type SeenEntry = { category: Category; names: Set<string>; providers: Set<string> }
+
+// 화면에 표시된 영어 원문과, 그 원문을 누가 어떤 이름으로 제공했는지 기록합니다.
+export type Seen = Record<Kind, Map<string, SeenEntry>>
 
 // 번역 명령어가 번역한 개수와 실패한 개수입니다. newlySkipped는 실패한 원문 중 이번 실행에서 실패 횟수가 3 이상이 된 수입니다.
 export type Counts = { commands: number; config: number; failed: number; newlySkipped: number }
@@ -29,11 +37,19 @@ export type ExportResult = { json: string; missing: number; builtinCount: number
 
 // 사용자에게 보여 주는 문구입니다.
 export const MESSAGES = {
-  commandDescription: '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다',
+  commandDescription:
+    '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다. 요청을 함께 쓰면 그 요청대로 번역하거나 고칩니다',
+  translateHint: '[요청]',
+  selecting: '대상 선택 중',
+  requestChoices: { proceed: '진행', cancel: '취소' },
+  requestNoCandidates: '요청을 적용할 문구가 없습니다.',
+  requestNoTargets: '요청에 해당하는 문구를 찾지 못해서 아무것도 바꾸지 않았습니다.',
+  requestUnreadable:
+    '대상을 고르지 못해서 아무것도 바꾸지 않았습니다(응답을 읽을 수 없음). 요청을 더 구체적으로 써서 다시 실행해 주세요.',
+  requestCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
   nothing: '번역할 문구가 없습니다.',
   noCategory: "번역 항목이 모두 꺼져 있습니다. /config에서 '기본 항목 번역'이나 '다른 플러그인과 스킬 번역'을 켜 주세요.",
   othersHint: '다른 플러그인과 스킬도 번역하려면 /config에서 해당 항목을 켠 뒤 다시 실행하세요.',
-  usage: '사용법: /korean-ui-translate를 인자 없이 실행하면 번역되지 않은 문구를 번역합니다.',
   exportNothingSeen:
     '아직 확인한 기본 항목이 없어서 내보내지 않았습니다. 입력창에 /를 입력해 명령어 목록을 한 번 연 뒤 다시 실행하세요.',
   guideFailed: (reason: string) =>
@@ -46,6 +62,7 @@ export const MESSAGES = {
     `기본 항목의 번역을 ${path}에 저장했습니다. 번역문이 없는 기본 항목은 ${missing}개입니다.`,
   exportFailed: (reason: string, path: string) => `내보내기 파일을 저장하지 못했습니다. 원인: ${reason}. 저장하려던 경로: ${path}`,
   notice: (count: number) => `번역되지 않은 문구가 ${count}개 있습니다. /korean-ui-translate를 실행하면 번역합니다.`,
+  progress: (done: number, total: number) => `번역 중 ${done}/${total}`,
   failedHeader: '실패한 문구:',
   reasons: {
     missing: '응답에 번역문이 없음',
@@ -56,24 +73,46 @@ export const MESSAGES = {
     emptyReply: '응답이 비어 있음',
   },
   skipped: (count: number) => `이번 실행에서는 3번 실패한 문구 ${count}개를 건너뛰었습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
-  resetDescription: 'Haiku로 번역해서 저장한 문구를 모두 지웁니다',
+  resetDescription: 'Haiku로 번역해서 저장한 문구를 지웁니다. 플러그인 이름을 쓰면 그 플러그인의 번역만 지웁니다',
+  resetHint: '[플러그인]',
   resetNothing: '지울 번역이 없습니다.',
   resetChoices: { remove: '지우기', retranslate: '지우고 다시 번역', cancel: '취소' },
-  resetQuestion: (translations: number, skipped: number): string => {
-    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지워서 다음 번역 때 다시 시도하게 할까요?`
-    const lead = `기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 ${translations}개`
-    if (skipped === 0) return `${lead}를 모두 지울까요?`
-    return `${lead}와 3번 실패한 문구의 기록 ${skipped}개를 모두 지울까요?`
+  // provider를 넘기면 그 제공자의 번역만 지우는 질문이 됩니다.
+  resetQuestion: (translations: number, skipped: number, provider?: string): string => {
+    const owner = provider === undefined ? '' : `${provider}의 `
+    const all = provider === undefined ? '모두 ' : ''
+    if (translations === 0) return `${owner}3번 실패한 문구의 기록 ${skipped}개를 지워서 다음 번역 때 다시 시도하게 할까요?`
+    const lead = `기본 번역표의 번역은 그대로 남습니다. ${owner}Haiku로 번역한 문구 ${translations}개`
+    if (skipped === 0) return `${lead}를 ${all}지울까요?`
+    return `${lead}와 3번 실패한 문구의 기록 ${skipped}개를 ${all}지울까요?`
   },
-  resetDone: (translations: number, skipped: number): string => {
+  resetDone: (translations: number, skipped: number, provider?: string): string => {
+    const owner = provider === undefined ? '' : `${provider}의 `
     const retry = '건너뛰던 문구는 다음 번역 때 다시 시도합니다.'
-    if (skipped === 0) return translations > 0 ? `Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : ''
-    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
-    return `Haiku로 번역한 문구 ${translations}개와 3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+    if (skipped === 0) return translations > 0 ? `${owner}Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : ''
+    if (translations === 0) return `${owner}3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+    return `${owner}Haiku로 번역한 문구 ${translations}개와 3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
   },
+  resetProviderNothing: (provider: string) => `${provider}의 지울 번역이 없습니다.`,
+  resetUnknownProvider: (name: string, providers: readonly string[]): string => {
+    const lead = `일치하는 제공자가 없어서 아무것도 지우지 않았습니다(입력한 이름: ${name}).`
+    if (providers.length === 0) return `${lead} 아직 확인한 문구가 없습니다.`
+    return `${lead} 지정할 수 있는 이름: ${providers.join(', ')}`
+  },
+  resetOverridesKept: (reason: string) => `고친 번역은 지우지 못해서 그대로 남아 있습니다. 원인: ${reason}.`,
   resetFailuresKept: (reason: string) => `3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: ${reason}.`,
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
+  statusDescription: '번역 현황을 제공자별로 표시합니다',
+  // Claude Code가 명령어의 출력 앞에 플러그인 이름을 붙여 주므로, 첫 줄에는 이름을 다시 쓰지 않고 버전만 씁니다.
+  statusVersion: (version: string | undefined) => `버전: ${version ?? '알 수 없음'}`,
+  statusSettings: (settings: Settings): string => {
+    const onOff = (value: boolean) => (value ? '켜짐' : '꺼짐')
+    return `설정: 기본 항목 번역 ${onOff(settings.translateBuiltin)}, 다른 플러그인과 스킬 번역 ${onOff(settings.translateOthers)}, 미번역 알림 ${onOff(settings.notifyUntranslated)}`
+  },
+  statusColumns: ['제공자', '문구', '기본 번역표', '자동 번역', '고친 번역', '미번역', '건너뜀'],
+  statusNothingSeen: '아직 확인한 문구가 없습니다. 입력창에 /를 입력해 명령어 목록을 한 번 연 뒤 다시 실행하세요.',
+  statusUnseen: (count: number) => `이번 세션에서 확인하지 못한 저장 번역: ${count}개`,
   resetFailed: (reason: string) => `번역을 지우지 못했습니다. 원인: ${reason}. 기존 번역은 그대로 남아 있습니다.`,
 } as const
 
@@ -128,6 +167,14 @@ function pluginBase(name: string): string {
   return at === -1 ? name : name.slice(0, at)
 }
 
+// Claude Code 기본 항목의 제공자를 사용자에게 보여 줄 때 쓰는 이름입니다.
+export const BUILTIN_PROVIDER = 'claude-code'
+
+// 제공자를 사용자에게 보여 줄 이름으로 바꿉니다. Claude Code는 'claude-code', 다른 플러그인은 '@마켓플레이스'를 뗀 이름입니다.
+export function providerLabel(providerPlugin: string): string {
+  return providerPlugin === 'engine' ? BUILTIN_PROVIDER : pluginBase(providerPlugin)
+}
+
 const CURRENTLY = /^(.*\S) \(currently (.+)\)$/
 
 // 설명 끝의 ' (currently Opus 5.5)' 같은 현재 상태 표시를 떼어 냅니다. 상태가 바뀌어도 같은 번역문을 찾기 위해서입니다.
@@ -157,25 +204,33 @@ export function needsTranslation(source: string): boolean {
   return source.trim() !== '' && !HANGUL.test(source) && !/[\r\n]/.test(source)
 }
 
-// 영어 원문의 번역문을 찾습니다. 기본 번역표를 먼저 찾고, 없으면 사용자 번역 사전을 찾습니다.
-export function lookup(bundled: Dictionary, user: Dictionary, kind: Kind, source: string): string | undefined {
-  if (Object.hasOwn(bundled[kind], source)) return bundled[kind][source]
-  if (Object.hasOwn(user[kind], source)) return user[kind][source]
+// 영어 원문의 번역문을 찾습니다. 고친 번역을 먼저 찾고, 없으면 기본 번역표, 그다음 자동 번역을 찾습니다.
+export function lookup(layers: Layers, kind: Kind, source: string): string | undefined {
+  for (const dictionary of [layers.overrides, layers.bundled, layers.user]) {
+    if (Object.hasOwn(dictionary[kind], source)) return dictionary[kind][source]
+  }
   return undefined
 }
 
 // 화면에 표시된 원문을 기록합니다. Claude Code도 같은 원문을 쓰면 Claude Code 항목으로 남겨서 내보내기에서 빠지지 않게 합니다.
-export function recordSeen(seen: Seen, kind: Kind, source: string, category: Category): void {
-  if (seen[kind].get(source) === 'builtin') return
-  seen[kind].set(source, category)
+// 같은 원문을 여러 명령어나 여러 제공자가 쓰면 이름과 제공자를 모두 모읍니다.
+export function recordSeen(seen: Seen, kind: Kind, source: string, category: Category, name: string, provider: string): void {
+  const entry = seen[kind].get(source)
+  if (entry === undefined) {
+    seen[kind].set(source, { category, names: new Set([name]), providers: new Set([provider]) })
+    return
+  }
+  if (entry.category !== 'builtin') entry.category = category
+  entry.names.add(name)
+  entry.providers.add(provider)
 }
 
 // 번역하도록 켜 둔 항목 중에서 아직 번역문이 없는 원문을 정렬해서 돌려줍니다.
-export function untranslated(seen: Seen, settings: Settings, bundled: Dictionary, user: Dictionary): Record<Kind, string[]> {
+export function untranslated(seen: Seen, settings: Settings, layers: Layers): Record<Kind, string[]> {
   const result: Record<Kind, string[]> = { commands: [], config: [] }
   for (const kind of KINDS) {
-    for (const [source, category] of seen[kind]) {
-      if (isEnabled(category, settings) && lookup(bundled, user, kind, source) === undefined) result[kind].push(source)
+    for (const [source, entry] of seen[kind]) {
+      if (isEnabled(entry.category, settings) && lookup(layers, kind, source) === undefined) result[kind].push(source)
     }
     result[kind].sort()
   }
@@ -209,16 +264,17 @@ export function withTranslations(dictionary: Dictionary, kind: Kind, additions: 
 
 // 기존 기본 번역표에, 화면에서 확인한 Claude Code 기본 항목의 새 번역문을 더해 기본 번역표(ko.json)와 같은 형식의 JSON으로 만듭니다.
 // /diff처럼 상황에 따라서만 나타나는 항목의 번역이 빠지지 않도록, 기존 기본 번역표의 항목은 모두 남깁니다.
-export function buildExport(seen: Seen, bundled: Dictionary, user: Dictionary): ExportResult {
+// 기본 항목에 고친 번역이 있으면 그 번역을 넣어서, 요청으로 고친 번역을 기본 번역표에 반영할 수 있게 합니다.
+export function buildExport(seen: Seen, layers: Layers): ExportResult {
   const out = emptyDictionary()
   let missing = 0
   let builtinCount = 0
   for (const kind of KINDS) {
-    const merged: Record<string, string> = { ...bundled[kind] }
-    for (const [source, category] of seen[kind]) {
-      if (category !== 'builtin') continue
+    const merged: Record<string, string> = { ...layers.bundled[kind] }
+    for (const [source, entry] of seen[kind]) {
+      if (entry.category !== 'builtin') continue
       builtinCount += 1
-      const translated = lookup(bundled, user, kind, source)
+      const translated = lookup(layers, kind, source)
       if (translated === undefined) missing += 1
       else merged[source] = translated
     }
@@ -288,17 +344,56 @@ export function failureReason(reason: string, status: number | null | undefined)
   return reason
 }
 
+// Haiku에게 번역을 요청할 원문 하나입니다. names는 그 원문을 쓰는 명령어 이름이나 /config 항목의 key이고,
+// providers는 그 원문을 제공하는 제공자의 표시 이름입니다. current는 지금 표시 중인 번역문으로, 자유 요청에서만 넣습니다.
+export type PromptItem = { source: string; names: readonly string[]; providers: readonly string[]; current?: string }
+
+// 요청문에 넣는 이름과 제공자는 이 개수까지만 보냅니다.
+export const CONTEXT_LIMIT = 3
+
+// 번역 요청문에서 name과 plugin이 무엇인지 알려 주는 문장입니다.
+export const CONTEXT_HINT =
+  'name은 이 문구가 붙은 명령어 이름 또는 설정 항목의 key이고, plugin은 그 항목을 제공하는 플러그인입니다. 뜻을 짐작하는 데만 쓰고 번역문에는 넣지 마세요.'
+
+// 원문마다 화면에서 확인한 이름과 제공자를 붙여서 번역 요청 항목으로 만듭니다. 기록이 없는 원문은 이름과 제공자를 비워 둡니다.
+export function promptItems(seen: Seen, kind: Kind, sources: readonly string[]): PromptItem[] {
+  return sources.map((source) => {
+    const entry = seen[kind].get(source)
+    return { source, names: [...(entry?.names ?? [])], providers: [...(entry?.providers ?? [])] }
+  })
+}
+
 // Haiku에게 보낼 번역 요청문을 만듭니다. 원문 대신 번호를 키로 쓰게 해서, 응답의 키가 원문과 어긋나는 문제를 막습니다.
 // 원문에 그대로 둘 명령어, 옵션, 백틱 코드가 있으면 keep으로 함께 보냅니다. 응답을 검사할 때와 같은 목록입니다.
-export function buildPrompt(kind: Kind, batch: readonly string[]): string {
+// 짧고 모호한 문구의 뜻을 짐작할 수 있도록, 이름과 제공자가 있으면 name과 plugin으로 함께 보냅니다.
+// instruction은 자유 요청에서 사용자가 쓴 요청 문장입니다. 있으면 번역 지침보다 먼저 따르게 하고,
+// 지금 표시 중인 번역문이 있는 항목에는 그 번역문을 current로 함께 보냅니다.
+export function buildPrompt(kind: Kind, batch: readonly PromptItem[], instruction?: string): string {
   const target = kind === 'commands' ? 'Claude Code의 명령어와 스킬 설명' : 'Claude Code의 /config 설정 항목 이름과 도움말'
-  const items = batch.map((text, index) => {
-    const keep = protectedTokens(text)
-    return keep.length > 0 ? { id: String(index + 1), text, keep } : { id: String(index + 1), text }
+  const items = batch.map((item, index) => {
+    const keep = protectedTokens(item.source)
+    return {
+      id: String(index + 1),
+      text: item.source,
+      ...(keep.length > 0 ? { keep } : {}),
+      ...(item.names.length > 0 ? { name: item.names.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
+      ...(item.providers.length > 0 ? { plugin: item.providers.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
+      ...(item.current === undefined ? {} : { current: item.current }),
+    }
   })
+  const requested =
+    instruction === undefined
+      ? []
+      : [
+          `사용자 요청: ${instruction}`,
+          '요청이 번역 지침과 다르면 요청을 따르세요. 요청 중 대상을 고르는 부분은 이미 처리했으므로 번역 방식에 관한 부분만 따르세요.',
+          'current가 있는 항목은 current가 지금 표시 중인 번역문입니다.',
+        ]
   return [
     `다음은 ${target}입니다. 번역 지침에 따라 각 항목의 text를 한국어로 번역하세요.`,
     'keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.',
+    CONTEXT_HINT,
+    ...requested,
     '응답에는 id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요. 다른 설명은 쓰지 마세요.',
     '응답 형식의 예: {"1": "번역문", "2": "번역문"}',
     '',
@@ -478,15 +573,12 @@ export function withFailures(
   return { version: failures.version, counts }
 }
 
-// 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.
+// 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 여러 계층에 있으면 고친 번역, 기본 번역표,
+// 자동 번역 순으로 그 계층의 원문을 씁니다.
 // retired(이번 로드 동안 사전에서 빠진 번역문)도 넣되, 같은 번역문이 지금 사전에 있으면 지금 사전의 원문을 씁니다.
-export function buildReverse(
-  bundled: Dictionary,
-  user: Dictionary,
-  retired: ReadonlyMap<string, string> = new Map(),
-): Map<string, string> {
+export function buildReverse(layers: Layers, retired: ReadonlyMap<string, string> = new Map()): Map<string, string> {
   const reverse = new Map<string, string>(retired)
-  for (const dictionary of [user, bundled]) {
+  for (const dictionary of [layers.user, layers.bundled, layers.overrides]) {
     for (const [source, translated] of Object.entries(dictionary.commands)) reverse.set(translated, source)
   }
   return reverse
@@ -497,8 +589,7 @@ export function buildReverse(
 // 그 명령어의 원문에 대한 지운 번역문(retired)도 넣습니다.
 export function buildNamedReverse(
   described: ReadonlyMap<string, string>,
-  bundled: Dictionary,
-  user: Dictionary,
+  layers: Layers,
   retired: ReadonlyMap<string, string> = new Map(),
 ): Map<string, Map<string, string>> {
   const named = new Map<string, Map<string, string>>()
@@ -508,7 +599,7 @@ export function buildNamedReverse(
     for (const [translated, retiredSource] of retired) {
       if (retiredSource === base) reverse.set(translated, base)
     }
-    for (const dictionary of [user, bundled]) {
+    for (const dictionary of [layers.user, layers.bundled, layers.overrides]) {
       const translated = dictionary.commands[base]
       if (Object.hasOwn(dictionary.commands, base) && translated !== undefined) reverse.set(translated, base)
     }
@@ -517,7 +608,7 @@ export function buildNamedReverse(
   return named
 }
 
-// 이번 로드 동안 사용자 번역 사전에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문입니다. 키는 번역문, 값은 영어 원문입니다.
+// 이번 로드 동안 자동 번역이나 고친 번역에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문입니다. 키는 번역문, 값은 영어 원문입니다.
 // Claude Code가 이전에 만든 스킬 목록을 다시 보내도 영어 원문으로 되돌릴 수 있도록 메모리에만 둡니다.
 export type Retired = Map<string, string>
 
@@ -570,7 +661,7 @@ export type ListingRestore = { text: string; restored: number; byName: number; l
 const LISTING_LINE = /^- (\S+): (.*)$/
 
 // Claude에게 보내는 스킬 목록에서 화면용 번역문을 영어 원문으로 되돌립니다.
-// 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 두 사전 전체에서 찾습니다.
+// 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 사전 전체에서 찾습니다.
 // 되돌린 뒤에도 번역문이 남아 있으면 목록 형식이 바뀐 것이므로, 남은 개수를 함께 알려 줍니다.
 export function restoreListing(
   text: string,
