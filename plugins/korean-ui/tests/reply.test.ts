@@ -124,6 +124,23 @@ test('buildPrompt는 이름과 제공자를 항목에 넣고, 번역문에 넣�
   ])
 })
 
+test('buildPrompt는 지시와 지금 번역문이 있으면 요청문에 넣습니다', () => {
+  const prompt = buildPrompt(
+    'commands',
+    [{ source: 'Exit', names: ['/exit'], providers: ['claude-code'], current: '종료합니다' }],
+    '더 짧게',
+  )
+  expect(prompt).toContain('사용자 요청: 더 짧게')
+  expect(prompt).toContain(
+    '요청이 번역 지침과 다르면 요청을 따르세요. 요청 중 대상을 고르는 부분은 이미 처리했으므로 번역 방식에 관한 부분만 따르세요.',
+  )
+  expect(prompt).toContain('current가 있는 항목은 current가 지금 표시 중인 번역문입니다.')
+  expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
+    { id: '1', text: 'Exit', name: '/exit', plugin: 'claude-code', current: '종료합니다' },
+  ])
+  expect(buildPrompt('commands', [item('Exit')])).not.toContain('사용자 요청')
+})
+
 const REVERSE = new Map([
   ['사용자가 요청할 때 사용합니다', 'Use when the user asks'],
   ['Claude Code의 AI 모델을 설정합니다', 'Set the AI model for Claude Code'],

@@ -38,6 +38,13 @@ export type ExportResult = { json: string; missing: number; builtinCount: number
 // 사용자에게 보여 주는 문구입니다.
 export const MESSAGES = {
   commandDescription: '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다',
+  selecting: '대상 선택 중',
+  requestChoices: { proceed: '진행', cancel: '취소' },
+  requestNoCandidates: '요청을 적용할 문구가 없습니다.',
+  requestNoTargets: '요청에 해당하는 문구를 찾지 못해서 아무것도 바꾸지 않았습니다.',
+  requestUnreadable:
+    '대상을 고르지 못해서 아무것도 바꾸지 않았습니다(응답을 읽을 수 없음). 요청을 더 구체적으로 써서 다시 실행해 주세요.',
+  requestCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
   nothing: '번역할 문구가 없습니다.',
   noCategory: "번역 항목이 모두 꺼져 있습니다. /config에서 '기본 항목 번역'이나 '다른 플러그인과 스킬 번역'을 켜 주세요.",
   othersHint: '다른 플러그인과 스킬도 번역하려면 /config에서 해당 항목을 켠 뒤 다시 실행하세요.',
@@ -336,11 +343,11 @@ export function failureReason(reason: string, status: number | null | undefined)
 }
 
 // Haiku에게 번역을 요청할 원문 하나입니다. names는 그 원문을 쓰는 명령어 이름이나 /config 항목의 key이고,
-// providers는 그 원문을 제공하는 제공자의 표시 이름입니다.
-export type PromptItem = { source: string; names: readonly string[]; providers: readonly string[] }
+// providers는 그 원문을 제공하는 제공자의 표시 이름입니다. current는 지금 표시 중인 번역문으로, 자유 요청에서만 넣습니다.
+export type PromptItem = { source: string; names: readonly string[]; providers: readonly string[]; current?: string }
 
 // 요청문에 넣는 이름과 제공자는 이 개수까지만 보냅니다.
-const CONTEXT_LIMIT = 3
+export const CONTEXT_LIMIT = 3
 
 // 번역 요청문에서 name과 plugin이 무엇인지 알려 주는 문장입니다.
 export const CONTEXT_HINT =
@@ -357,7 +364,9 @@ export function promptItems(seen: Seen, kind: Kind, sources: readonly string[]):
 // Haiku에게 보낼 번역 요청문을 만듭니다. 원문 대신 번호를 키로 쓰게 해서, 응답의 키가 원문과 어긋나는 문제를 막습니다.
 // 원문에 그대로 둘 명령어, 옵션, 백틱 코드가 있으면 keep으로 함께 보냅니다. 응답을 검사할 때와 같은 목록입니다.
 // 짧고 모호한 문구의 뜻을 짐작할 수 있도록, 이름과 제공자가 있으면 name과 plugin으로 함께 보냅니다.
-export function buildPrompt(kind: Kind, batch: readonly PromptItem[]): string {
+// instruction은 자유 요청에서 사용자가 쓴 요청 문장입니다. 있으면 번역 지침보다 먼저 따르게 하고,
+// 지금 표시 중인 번역문이 있는 항목에는 그 번역문을 current로 함께 보냅니다.
+export function buildPrompt(kind: Kind, batch: readonly PromptItem[], instruction?: string): string {
   const target = kind === 'commands' ? 'Claude Code의 명령어와 스킬 설명' : 'Claude Code의 /config 설정 항목 이름과 도움말'
   const items = batch.map((item, index) => {
     const keep = protectedTokens(item.source)
@@ -367,12 +376,22 @@ export function buildPrompt(kind: Kind, batch: readonly PromptItem[]): string {
       ...(keep.length > 0 ? { keep } : {}),
       ...(item.names.length > 0 ? { name: item.names.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
       ...(item.providers.length > 0 ? { plugin: item.providers.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
+      ...(item.current === undefined ? {} : { current: item.current }),
     }
   })
+  const requested =
+    instruction === undefined
+      ? []
+      : [
+          `사용자 요청: ${instruction}`,
+          '요청이 번역 지침과 다르면 요청을 따르세요. 요청 중 대상을 고르는 부분은 이미 처리했으므로 번역 방식에 관한 부분만 따르세요.',
+          'current가 있는 항목은 current가 지금 표시 중인 번역문입니다.',
+        ]
   return [
     `다음은 ${target}입니다. 번역 지침에 따라 각 항목의 text를 한국어로 번역하세요.`,
     'keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.',
     CONTEXT_HINT,
+    ...requested,
     '응답에는 id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요. 다른 설명은 쓰지 마세요.',
     '응답 형식의 예: {"1": "번역문", "2": "번역문"}',
     '',
