@@ -11,6 +11,10 @@ export type Category = 'builtin' | 'others' | 'self'
 // 영어 원문을 키로, 한국어 번역문을 값으로 저장합니다. 명령어 설명과 /config 항목을 나누어 저장합니다.
 export type Dictionary = Record<Kind, Record<string, string>>
 
+// 번역문을 찾는 세 계층입니다. overrides는 요청으로 고친 번역, bundled는 기본 번역표, user는 자동 번역입니다.
+// 번역문은 이 순서로 찾습니다.
+export type Layers = { overrides: Dictionary; bundled: Dictionary; user: Dictionary }
+
 // /config에서 켜고 끄는 세 항목의 값입니다.
 export type Settings = {
   translateBuiltin: boolean
@@ -169,10 +173,11 @@ export function needsTranslation(source: string): boolean {
   return source.trim() !== '' && !HANGUL.test(source) && !/[\r\n]/.test(source)
 }
 
-// 영어 원문의 번역문을 찾습니다. 기본 번역표를 먼저 찾고, 없으면 사용자 번역 사전을 찾습니다.
-export function lookup(bundled: Dictionary, user: Dictionary, kind: Kind, source: string): string | undefined {
-  if (Object.hasOwn(bundled[kind], source)) return bundled[kind][source]
-  if (Object.hasOwn(user[kind], source)) return user[kind][source]
+// 영어 원문의 번역문을 찾습니다. 고친 번역을 먼저 찾고, 없으면 기본 번역표, 그다음 자동 번역을 찾습니다.
+export function lookup(layers: Layers, kind: Kind, source: string): string | undefined {
+  for (const dictionary of [layers.overrides, layers.bundled, layers.user]) {
+    if (Object.hasOwn(dictionary[kind], source)) return dictionary[kind][source]
+  }
   return undefined
 }
 
@@ -190,11 +195,11 @@ export function recordSeen(seen: Seen, kind: Kind, source: string, category: Cat
 }
 
 // 번역하도록 켜 둔 항목 중에서 아직 번역문이 없는 원문을 정렬해서 돌려줍니다.
-export function untranslated(seen: Seen, settings: Settings, bundled: Dictionary, user: Dictionary): Record<Kind, string[]> {
+export function untranslated(seen: Seen, settings: Settings, layers: Layers): Record<Kind, string[]> {
   const result: Record<Kind, string[]> = { commands: [], config: [] }
   for (const kind of KINDS) {
     for (const [source, entry] of seen[kind]) {
-      if (isEnabled(entry.category, settings) && lookup(bundled, user, kind, source) === undefined) result[kind].push(source)
+      if (isEnabled(entry.category, settings) && lookup(layers, kind, source) === undefined) result[kind].push(source)
     }
     result[kind].sort()
   }
@@ -228,16 +233,17 @@ export function withTranslations(dictionary: Dictionary, kind: Kind, additions: 
 
 // 기존 기본 번역표에, 화면에서 확인한 Claude Code 기본 항목의 새 번역문을 더해 기본 번역표(ko.json)와 같은 형식의 JSON으로 만듭니다.
 // /diff처럼 상황에 따라서만 나타나는 항목의 번역이 빠지지 않도록, 기존 기본 번역표의 항목은 모두 남깁니다.
-export function buildExport(seen: Seen, bundled: Dictionary, user: Dictionary): ExportResult {
+// 기본 항목에 고친 번역이 있으면 그 번역을 넣어서, 요청으로 고친 번역을 기본 번역표에 반영할 수 있게 합니다.
+export function buildExport(seen: Seen, layers: Layers): ExportResult {
   const out = emptyDictionary()
   let missing = 0
   let builtinCount = 0
   for (const kind of KINDS) {
-    const merged: Record<string, string> = { ...bundled[kind] }
+    const merged: Record<string, string> = { ...layers.bundled[kind] }
     for (const [source, entry] of seen[kind]) {
       if (entry.category !== 'builtin') continue
       builtinCount += 1
-      const translated = lookup(bundled, user, kind, source)
+      const translated = lookup(layers, kind, source)
       if (translated === undefined) missing += 1
       else merged[source] = translated
     }
@@ -497,15 +503,12 @@ export function withFailures(
   return { version: failures.version, counts }
 }
 
-// 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 두 사전에 있으면 기본 번역표의 원문을 씁니다.
+// 명령어 설명의 번역문으로 영어 원문을 찾는 표를 만듭니다. 같은 번역문이 여러 계층에 있으면 고친 번역, 기본 번역표,
+// 자동 번역 순으로 그 계층의 원문을 씁니다.
 // retired(이번 로드 동안 사전에서 빠진 번역문)도 넣되, 같은 번역문이 지금 사전에 있으면 지금 사전의 원문을 씁니다.
-export function buildReverse(
-  bundled: Dictionary,
-  user: Dictionary,
-  retired: ReadonlyMap<string, string> = new Map(),
-): Map<string, string> {
+export function buildReverse(layers: Layers, retired: ReadonlyMap<string, string> = new Map()): Map<string, string> {
   const reverse = new Map<string, string>(retired)
-  for (const dictionary of [user, bundled]) {
+  for (const dictionary of [layers.user, layers.bundled, layers.overrides]) {
     for (const [source, translated] of Object.entries(dictionary.commands)) reverse.set(translated, source)
   }
   return reverse
@@ -516,8 +519,7 @@ export function buildReverse(
 // 그 명령어의 원문에 대한 지운 번역문(retired)도 넣습니다.
 export function buildNamedReverse(
   described: ReadonlyMap<string, string>,
-  bundled: Dictionary,
-  user: Dictionary,
+  layers: Layers,
   retired: ReadonlyMap<string, string> = new Map(),
 ): Map<string, Map<string, string>> {
   const named = new Map<string, Map<string, string>>()
@@ -527,7 +529,7 @@ export function buildNamedReverse(
     for (const [translated, retiredSource] of retired) {
       if (retiredSource === base) reverse.set(translated, base)
     }
-    for (const dictionary of [user, bundled]) {
+    for (const dictionary of [layers.user, layers.bundled, layers.overrides]) {
       const translated = dictionary.commands[base]
       if (Object.hasOwn(dictionary.commands, base) && translated !== undefined) reverse.set(translated, base)
     }
@@ -536,7 +538,7 @@ export function buildNamedReverse(
   return named
 }
 
-// 이번 로드 동안 사용자 번역 사전에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문입니다. 키는 번역문, 값은 영어 원문입니다.
+// 이번 로드 동안 자동 번역이나 고친 번역에서 빠지거나 다른 번역으로 바뀐 명령어 설명의 이전 번역문입니다. 키는 번역문, 값은 영어 원문입니다.
 // Claude Code가 이전에 만든 스킬 목록을 다시 보내도 영어 원문으로 되돌릴 수 있도록 메모리에만 둡니다.
 export type Retired = Map<string, string>
 
@@ -589,7 +591,7 @@ export type ListingRestore = { text: string; restored: number; byName: number; l
 const LISTING_LINE = /^- (\S+): (.*)$/
 
 // Claude에게 보내는 스킬 목록에서 화면용 번역문을 영어 원문으로 되돌립니다.
-// 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 두 사전 전체에서 찾습니다.
+// 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 사전 전체에서 찾습니다.
 // 되돌린 뒤에도 번역문이 남아 있으면 목록 형식이 바뀐 것이므로, 남은 개수를 함께 알려 줍니다.
 export function restoreListing(
   text: string,

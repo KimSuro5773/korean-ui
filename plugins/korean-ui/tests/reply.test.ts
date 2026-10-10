@@ -10,7 +10,11 @@ import {
   restoreListing,
   retireRemoved,
   validateReply,
+  type Dictionary,
 } from '../hooks/lib/translation.ts'
+
+// 고친 번역이 없는 세 계층을 만듭니다.
+const layers = (bundled: Dictionary, user: Dictionary) => ({ overrides: { commands: {}, config: {} }, bundled, user })
 
 const CLEAR_EN = 'Start a new session with empty context; previous session stays on disk (resumable with /resume)'
 const CLEAR_KO = '빈 컨텍스트로 새 세션을 시작합니다. 이전 세션은 디스크에 유지됩니다(/resume으로 이어서 진행할 수 있습니다)'
@@ -113,9 +117,22 @@ const HEADER = 'The following skills are available for use with the Skill tool:'
 test('buildReverse는 번역문으로 원문을 찾게 하고 기본 번역표를 우선합니다', () => {
   const bundled = { commands: { A: '가' }, config: { Theme: '테마' } }
   const user = { commands: { B: '나', C: '가' }, config: {} }
-  expect([...buildReverse(bundled, user)].sort()).toEqual([
+  expect([...buildReverse(layers(bundled, user))].sort()).toEqual([
     ['가', 'A'],
     ['나', 'B'],
+  ])
+})
+
+test('buildReverse는 고친 번역의 번역문도 되돌리고, 같은 번역문이면 고친 번역의 원문을 씁니다', () => {
+  const all = {
+    overrides: { commands: { C: '가', D: '라' }, config: {} },
+    bundled: { commands: { A: '가' }, config: {} },
+    user: { commands: { B: '나' }, config: {} },
+  }
+  expect([...buildReverse(all)].sort()).toEqual([
+    ['가', 'C'],
+    ['나', 'B'],
+    ['라', 'D'],
   ])
 })
 
@@ -154,7 +171,7 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
     ['suite', 'Run the test suite'],
   ])
   const text = '- unit: 테스트를 실행합니다\n- suite: 테스트를 실행합니다'
-  expect(restoreListing(text, buildReverse(bundled, user), buildNamedReverse(described, bundled, user))).toEqual({
+  expect(restoreListing(text, buildReverse(layers(bundled, user)), buildNamedReverse(described, layers(bundled, user)))).toEqual({
     text: '- unit: Run tests\n- suite: Run the test suite',
     restored: 2,
     byName: 2,
@@ -165,13 +182,13 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
 test('buildNamedReverse는 명령어마다 자기 번역문으로 원문을 찾고, (현재 …)가 달라도 원문을 찾습니다', () => {
   const bundled = { commands: { 'Set the AI model for Claude Code': 'Claude Code의 AI 모델을 설정합니다' }, config: {} }
   const user = { commands: {}, config: {} }
-  const named = buildNamedReverse(new Map([['model', 'Set the AI model for Claude Code (currently Opus 5.5)']]), bundled, user)
+  const named = buildNamedReverse(new Map([['model', 'Set the AI model for Claude Code (currently Opus 5.5)']]), layers(bundled, user))
   expect(originalOf('Claude Code의 AI 모델을 설정합니다(현재 Sonnet 5.5)', named.get('model') ?? new Map())).toBe(
     'Set the AI model for Claude Code (currently Sonnet 5.5)',
   )
 })
 
-test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체에서 찾은 줄을 나눠 셉니다', () => {
+test('restoreListing은 명령어 이름으로 찾은 줄과 사전 전체에서 찾은 줄을 나눠 셉니다', () => {
   const bundled = {
     commands: {
       'Use when the user asks': '사용자가 요청할 때 사용합니다',
@@ -180,9 +197,9 @@ test('restoreListing은 명령어 이름으로 찾은 줄과 두 사전 전체�
     config: {},
   }
   const user = { commands: {}, config: {} }
-  const named = buildNamedReverse(new Map([['kui:skill', 'Use when the user asks']]), bundled, user)
+  const named = buildNamedReverse(new Map([['kui:skill', 'Use when the user asks']]), layers(bundled, user))
   const text = '- kui:skill: 사용자가 요청할 때 사용합니다\n- model: Claude Code의 AI 모델을 설정합니다'
-  expect(restoreListing(text, buildReverse(bundled, user), named)).toEqual({
+  expect(restoreListing(text, buildReverse(layers(bundled, user)), named)).toEqual({
     text: '- kui:skill: Use when the user asks\n- model: Set the AI model for Claude Code',
     restored: 2,
     byName: 1,
@@ -228,10 +245,10 @@ test('buildReverse와 buildNamedReverse는 지운 번역문으로도 원문을 �
     ['예전 나', 'B'],
     ['가', 'Z'],
   ])
-  const reverse = buildReverse(bundled, user, retired)
+  const reverse = buildReverse(layers(bundled, user), retired)
   expect(reverse.get('예전 나')).toBe('B')
   expect(reverse.get('가')).toBe('A')
-  const named = buildNamedReverse(new Map([['b', 'B']]), bundled, user, retired)
+  const named = buildNamedReverse(new Map([['b', 'B']]), layers(bundled, user), retired)
   expect([...(named.get('b') ?? new Map())].sort()).toEqual([
     ['나', 'B'],
     ['예전 나', 'B'],

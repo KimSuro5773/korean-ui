@@ -95,14 +95,17 @@ test('needsTranslation은 여러 줄로 된 문구를 제외합니다', () => {
   expect(needsTranslation('Line one\r\nLine two')).toBe(false)
 })
 
-test('lookup은 기본 번역표를 먼저 찾고 객체의 기본 속성은 무시합니다', () => {
-  const bundled = { commands: { A: '기본' }, config: {} }
-  const user = { commands: { A: '사용자', B: '사용자 B' }, config: {} }
-  expect(lookup(bundled, user, 'commands', 'A')).toBe('기본')
-  expect(lookup(bundled, user, 'commands', 'B')).toBe('사용자 B')
-  expect(lookup(bundled, user, 'commands', 'C')).toBeUndefined()
-  expect(lookup(bundled, user, 'commands', 'constructor')).toBeUndefined()
-  expect(lookup(bundled, user, 'config', 'A')).toBeUndefined()
+test('lookup은 고친 번역, 기본 번역표, 자동 번역 순서로 찾고 객체의 기본 속성은 무시합니다', () => {
+  const layers = {
+    overrides: { commands: { A: '고친' }, config: {} },
+    bundled: { commands: { A: '기본', B: '기본 B' }, config: {} },
+    user: { commands: { A: '자동', B: '자동 B', C: '자동 C' }, config: {} },
+  }
+  expect(lookup(layers, 'commands', 'A')).toBe('고친')
+  expect(lookup(layers, 'commands', 'B')).toBe('기본 B')
+  expect(lookup(layers, 'commands', 'C')).toBe('자동 C')
+  expect(lookup(layers, 'commands', 'constructor')).toBeUndefined()
+  expect(lookup(layers, 'config', 'A')).toBeUndefined()
 })
 
 test('recordSeen은 같은 원문을 쓰는 이름과 제공자를 모두 모으고, 기본 항목이면 기본 항목으로 남깁니다', () => {
@@ -131,8 +134,8 @@ test('untranslated는 번역하도록 켜 둔 항목 중에서 번역문이 없�
   recordSeen(seen, 'commands', 'Other', 'others', '/other', 'other-plugin')
   recordSeen(seen, 'config', 'Theme', 'builtin', 'theme', 'claude-code')
   const bundled = { commands: { Known: '알려진 문구' }, config: {} }
-  expect(untranslated(seen, DEFAULTS, bundled, EMPTY)).toEqual({ commands: ['Alpha', 'Zeta'], config: ['Theme'] })
-  expect(untranslated(seen, ON_ALL, bundled, EMPTY).commands).toEqual(['Alpha', 'Other', 'Zeta'])
+  expect(untranslated(seen, DEFAULTS, { overrides: EMPTY, bundled, user: EMPTY })).toEqual({ commands: ['Alpha', 'Zeta'], config: ['Theme'] })
+  expect(untranslated(seen, ON_ALL, { overrides: EMPTY, bundled, user: EMPTY }).commands).toEqual(['Alpha', 'Other', 'Zeta'])
 })
 
 test('makeBatches는 50개마다 나눕니다', () => {
@@ -163,7 +166,7 @@ test('buildExport는 기존 기본 번역표를 모두 남기고, 확인한 기�
   // Conditional은 이번에 화면에 보이지 않은 기본 항목입니다. 기존 번역표에 있으므로 그대로 남아야 합니다.
   const bundled = { commands: { Zeta: '제타', Conditional: '조건부' }, config: { Theme: '테마' } }
   const user = { commands: { Alpha: '알파', Other: '다른 것' }, config: {} }
-  const result = buildExport(seen, bundled, user)
+  const result = buildExport(seen, { overrides: EMPTY, bundled, user })
   expect(result.missing).toBe(1)
   expect(result.builtinCount).toBe(4)
   expect(result.json).toBe(

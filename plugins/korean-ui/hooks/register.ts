@@ -5,6 +5,7 @@ import {
   type FailedItem,
   type Failures,
   type Kind,
+  type Layers,
   type Retired,
   type Seen,
   type Settings,
@@ -52,16 +53,18 @@ import {
 } from './lib/translation.ts'
 
 const STORE_DICTIONARY = 'dictionary'
+const STORE_OVERRIDES = 'overrides'
 const STORE_NOTIFIED = 'notified'
 const STORE_FAILURES = 'failures'
 const EXPORT_FILE = 'korean-ui-ko.json'
 const NOTICE_DELAY_MS = 1500
 
-// 처음 필요할 때 한 번 읽어 두는 값입니다. notified는 이미 알린 문구의 목록입니다.
-// user와 notified는 다른 세션이 바꿀 수 있으므로, 번역하거나 알림을 띄우기 직전에 저장소에서 다시 읽습니다.
-// retired는 user에서 빠진 이전 번역문으로, 스킬 목록을 되돌릴 때만 씁니다.
+// 처음 필요할 때 한 번 읽어 두는 값입니다. overrides는 요청으로 고친 번역, user는 자동 번역, notified는 이미 알린 문구의 목록입니다.
+// overrides, user, notified는 다른 세션이 바꿀 수 있으므로, 번역하거나 알림을 띄우기 직전에 저장소에서 다시 읽습니다.
+// retired는 overrides와 user에서 빠진 이전 번역문으로, 스킬 목록을 되돌릴 때만 씁니다.
 type Loaded = {
   bundled: Dictionary
+  overrides: Dictionary
   user: Dictionary
   notified: Set<string>
   retired: Retired
@@ -128,14 +131,15 @@ export const register: Register = (on, options) => {
   // 되돌린 줄 수를 디버그 로그에 남겨서, 명령어 이름으로 원문을 찾았는지 확인할 수 있게 합니다.
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     const loaded = await ensureLoaded($, state)
+    const layers = layersOf(loaded)
     const result = restoreListing(
       e.text,
-      buildReverse(loaded.bundled, loaded.user, loaded.retired),
-      buildNamedReverse(state.described, loaded.bundled, loaded.user, loaded.retired),
+      buildReverse(layers, loaded.retired),
+      buildNamedReverse(state.described, layers, loaded.retired),
     )
     if (result.restored > 0) {
       $.ui.log(
-        `스킬 목록에서 설명 ${result.restored}줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 ${result.byName}개, 두 사전 전체에서 찾은 줄 ${result.restored - result.byName}개).`,
+        `스킬 목록에서 설명 ${result.restored}줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 ${result.byName}개, 사전 전체에서 찾은 줄 ${result.restored - result.byName}개).`,
         { to: 'debug' },
       )
     }
@@ -185,7 +189,7 @@ async function translateText(
   recordSeen(state.seen, kind, base, category, name, providerLabel(providerPlugin))
   if (!isEnabled(category, state.settings)) return undefined
   const loaded = await ensureLoaded($, state)
-  const translated = lookup(loaded.bundled, loaded.user, kind, base)
+  const translated = lookup(layersOf(loaded), kind, base)
   if (translated === undefined) {
     scheduleNotice($, state)
     return undefined
@@ -193,16 +197,22 @@ async function translateText(
   return withState(translated, current)
 }
 
-// 기본 번역표, 사용자 번역 사전, 알림 기록을 처음 한 번만 읽고, 그다음부터는 읽어 둔 값을 씁니다.
+// 기본 번역표, 고친 번역, 자동 번역, 알림 기록을 처음 한 번만 읽고, 그다음부터는 읽어 둔 값을 씁니다.
 function ensureLoaded($: EngineInterface, state: State): Promise<Loaded> {
   state.loading ??= loadAll($, state)
   return state.loading
 }
 
-// 기본 번역표, 사용자 번역 사전, 알림 기록을 읽고 상태에 보관합니다.
+// 읽어 둔 값에서 번역문을 찾는 세 계층을 꺼냅니다.
+function layersOf(loaded: Loaded): Layers {
+  return { overrides: loaded.overrides, bundled: loaded.bundled, user: loaded.user }
+}
+
+// 기본 번역표, 고친 번역, 자동 번역, 알림 기록을 읽고 상태에 보관합니다.
 async function loadAll($: EngineInterface, state: State): Promise<Loaded> {
   const loaded: Loaded = {
     bundled: await readBundled($),
+    overrides: await readOverrides($),
     user: await readUser($),
     notified: await readNotified($),
     retired: new Map(),
@@ -217,6 +227,16 @@ async function readBundled($: EngineInterface): Promise<Dictionary> {
     return parseDictionary(JSON.parse(await $.fs.read(`${$.plugin.root}/locales/ko.json`)))
   } catch (error) {
     $.ui.log(`기본 번역표를 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+    return emptyDictionary()
+  }
+}
+
+// 저장소에서 요청으로 고친 번역을 읽습니다. 읽지 못하면 빈 사전으로 처리합니다.
+async function readOverrides($: EngineInterface): Promise<Dictionary> {
+  try {
+    return parseDictionary(await $.store.get(STORE_OVERRIDES))
+  } catch (error) {
+    $.ui.log(`고친 번역을 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     return emptyDictionary()
   }
 }
@@ -241,15 +261,22 @@ async function readNotified($: EngineInterface): Promise<Set<string>> {
   }
 }
 
-// 저장소에서 사용자 번역 사전을 다시 읽어 메모리의 사본을 바꿉니다. 다른 세션이 저장한 번역을 쓰기 위해서이며,
-// 읽지 못하면 사본을 그대로 씁니다.
-async function refreshUser($: EngineInterface, loaded: Loaded): Promise<void> {
+// 저장소에서 사용자 번역 사전과 고친 번역을 다시 읽어 메모리의 사본을 바꿉니다. 다른 세션이 저장한 번역을 쓰기 위해서이며,
+// 읽지 못한 쪽은 사본을 그대로 씁니다.
+async function refreshStored($: EngineInterface, loaded: Loaded): Promise<void> {
   try {
     const latest = parseDictionary(await $.store.get(STORE_DICTIONARY))
     retireRemoved(loaded.retired, loaded.user, latest)
     loaded.user = latest
   } catch (error) {
     $.ui.log(`사용자 번역 사전을 다시 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+  }
+  try {
+    const latest = parseDictionary(await $.store.get(STORE_OVERRIDES))
+    retireRemoved(loaded.retired, loaded.overrides, latest)
+    loaded.overrides = latest
+  } catch (error) {
+    $.ui.log(`고친 번역을 다시 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
   }
 }
 
@@ -325,9 +352,9 @@ function scheduleNotice($: EngineInterface, state: State): void {
 async function showNotice($: EngineInterface, state: State): Promise<void> {
   const loaded = state.loaded
   if (loaded === undefined || state.interactive === false) return
-  await refreshUser($, loaded)
+  await refreshStored($, loaded)
   const failures = await readFailures($, await readVersion($))
-  const { pending } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
+  const { pending } = splitSkipped(untranslated(state.seen, state.settings, layersOf(loaded)), failures)
   await refreshNotified($, loaded)
   const keys = KINDS.flatMap((kind) => pending[kind].map((source) => noticeKey(kind, source)))
   const fresh = keys.filter((key) => !loaded.notified.has(key))
@@ -360,11 +387,11 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
   if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
   await collectSources($)
   const loaded = await ensureLoaded($, state)
-  await refreshUser($, loaded)
+  await refreshStored($, loaded)
   try {
     const version = await readVersion($)
     const failures = await readFailures($, version)
-    const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, loaded.bundled, loaded.user), failures)
+    const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, layersOf(loaded)), failures)
     const tail = skippedText(skipped)
     if (pending.commands.length + pending.config.length === 0) return `${withOthersHint(MESSAGES.nothing, state.settings)}${tail}`
     let guide: string
@@ -444,8 +471,8 @@ async function saveTranslations(
 async function runExport($: EngineInterface, state: State): Promise<string> {
   await collectSources($)
   const loaded = await ensureLoaded($, state)
-  await refreshUser($, loaded)
-  const result = buildExport(state.seen, loaded.bundled, loaded.user)
+  await refreshStored($, loaded)
+  const result = buildExport(state.seen, layersOf(loaded))
   if (result.builtinCount === 0) return MESSAGES.exportNothingSeen
   const cwd = await $.session.cwd()
   // Windows 작업 폴더이면 안내 문구의 경로가 섞여 보이지 않도록 역슬래시로 이어 붙입니다.
@@ -463,7 +490,7 @@ async function runExport($: EngineInterface, state: State): Promise<string> {
 // 실패 횟수만 지우지 못하면, 건너뛰던 문구를 다시 시도한다고 하지 않고 기록이 남았다고 알려 줍니다.
 async function runReset($: EngineInterface, state: State): Promise<string> {
   const loaded = await ensureLoaded($, state)
-  await refreshUser($, loaded)
+  await refreshStored($, loaded)
   const translations = countEntries(loaded.user)
   const skipped = skippedCount(await readFailures($, await readVersion($)))
   if (translations === 0 && skipped === 0) return MESSAGES.resetNothing
