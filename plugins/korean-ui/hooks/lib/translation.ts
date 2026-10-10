@@ -313,17 +313,44 @@ export function failureReason(reason: string, status: number | null | undefined)
   return reason
 }
 
+// Haiku에게 번역을 요청할 원문 하나입니다. names는 그 원문을 쓰는 명령어 이름이나 /config 항목의 key이고,
+// providers는 그 원문을 제공하는 제공자의 표시 이름입니다.
+export type PromptItem = { source: string; names: readonly string[]; providers: readonly string[] }
+
+// 요청문에 넣는 이름과 제공자는 이 개수까지만 보냅니다.
+const CONTEXT_LIMIT = 3
+
+// 번역 요청문에서 name과 plugin이 무엇인지 알려 주는 문장입니다.
+export const CONTEXT_HINT =
+  'name은 이 문구가 붙은 명령어 이름 또는 설정 항목의 key이고, plugin은 그 항목을 제공하는 플러그인입니다. 뜻을 짐작하는 데만 쓰고 번역문에는 넣지 마세요.'
+
+// 원문마다 화면에서 확인한 이름과 제공자를 붙여서 번역 요청 항목으로 만듭니다. 기록이 없는 원문은 이름과 제공자를 비워 둡니다.
+export function promptItems(seen: Seen, kind: Kind, sources: readonly string[]): PromptItem[] {
+  return sources.map((source) => {
+    const entry = seen[kind].get(source)
+    return { source, names: [...(entry?.names ?? [])], providers: [...(entry?.providers ?? [])] }
+  })
+}
+
 // Haiku에게 보낼 번역 요청문을 만듭니다. 원문 대신 번호를 키로 쓰게 해서, 응답의 키가 원문과 어긋나는 문제를 막습니다.
 // 원문에 그대로 둘 명령어, 옵션, 백틱 코드가 있으면 keep으로 함께 보냅니다. 응답을 검사할 때와 같은 목록입니다.
-export function buildPrompt(kind: Kind, batch: readonly string[]): string {
+// 짧고 모호한 문구의 뜻을 짐작할 수 있도록, 이름과 제공자가 있으면 name과 plugin으로 함께 보냅니다.
+export function buildPrompt(kind: Kind, batch: readonly PromptItem[]): string {
   const target = kind === 'commands' ? 'Claude Code의 명령어와 스킬 설명' : 'Claude Code의 /config 설정 항목 이름과 도움말'
-  const items = batch.map((text, index) => {
-    const keep = protectedTokens(text)
-    return keep.length > 0 ? { id: String(index + 1), text, keep } : { id: String(index + 1), text }
+  const items = batch.map((item, index) => {
+    const keep = protectedTokens(item.source)
+    return {
+      id: String(index + 1),
+      text: item.source,
+      ...(keep.length > 0 ? { keep } : {}),
+      ...(item.names.length > 0 ? { name: item.names.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
+      ...(item.providers.length > 0 ? { plugin: item.providers.slice(0, CONTEXT_LIMIT).join(', ') } : {}),
+    }
   })
   return [
     `다음은 ${target}입니다. 번역 지침에 따라 각 항목의 text를 한국어로 번역하세요.`,
     'keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.',
+    CONTEXT_HINT,
     '응답에는 id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요. 다른 설명은 쓰지 마세요.',
     '응답 형식의 예: {"1": "번역문", "2": "번역문"}',
     '',

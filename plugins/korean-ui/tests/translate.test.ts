@@ -8,6 +8,7 @@ import {
   GUIDE,
   OTHER,
   OTHER_EN,
+  OTHER_KO,
   USAGE,
   VERSION,
   answer,
@@ -86,6 +87,19 @@ test('번역을 꺼 둔 다른 플러그인의 문구는 Haiku에게 보내지 �
   await run($)
   expect(world.prompts.length).toBe(1)
   expect(world.prompts[0]).not.toContain(OTHER_EN)
+})
+
+test('Haiku 요청에 명령어 이름과 제공자를 함께 넣습니다', { options: { translate_others: true } }, async ($, on) => {
+  const world = setupWorld(on, { replies: [answer({ '1': OTHER_KO, '2': CLEAR_KO }), answer({ '1': '시험용 설정' })] })
+  await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
+  await describeCommand($, OTHER_EN, OTHER, 'deploy')
+  await describeConfig($, 'Sample setting', BUILTIN, 'sample')
+  await run($)
+  expect(world.prompts[0]).toContain('"name": "/deploy"')
+  expect(world.prompts[0]).toContain('"plugin": "other-plugin"')
+  expect(world.prompts[0]).toContain('"name": "/clear"')
+  expect(world.prompts[0]).toContain('"plugin": "claude-code"')
+  expect(world.prompts[1]).toContain('"name": "sample"')
 })
 
 test('Haiku 호출이 실패하면 중단하고, 앞에서 저장한 번역은 유지합니다', async ($, on) => {

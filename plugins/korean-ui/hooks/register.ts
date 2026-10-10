@@ -6,6 +6,7 @@ import {
   type Failures,
   type Kind,
   type Layers,
+  type PromptItem,
   type Retired,
   type Seen,
   type Settings,
@@ -32,6 +33,7 @@ import {
   parseDictionary,
   parseFailures,
   parseNotified,
+  promptItems,
   providerLabel,
   readSettings,
   recordSeen,
@@ -404,7 +406,7 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
     const failed: FailedItem[] = []
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
-        const outcome = await translateBatch($, loaded, guide, kind, batch, version)
+        const outcome = await translateBatch($, loaded, guide, kind, promptItems(state.seen, kind, batch), version)
         if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}${failedListText(failed)}${tail}`
         counts[kind] += outcome.saved
         counts.failed += outcome.failed.length
@@ -420,17 +422,19 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
 }
 
 // 원문 몇 개를 Haiku에 한 번 보내 번역하고, 검사를 통과한 번역문을 저장합니다. 결과는 실패 횟수에도 반영합니다.
+// items는 원문에 이름과 제공자를 붙인 항목이고, 응답은 그 원문만 가지고 검사합니다.
 async function translateBatch(
   $: EngineInterface,
   loaded: Loaded,
   guide: string,
   kind: Kind,
-  batch: readonly string[],
+  items: readonly PromptItem[],
   version: string | undefined,
 ): Promise<BatchOutcome> {
+  const batch = items.map((item) => item.source)
   let reply: ModelCompleteResult
   try {
-    reply = await $.model.complete({ model: 'haiku', system: guide, prompt: buildPrompt(kind, batch), maxTokens: 8192 })
+    reply = await $.model.complete({ model: 'haiku', system: guide, prompt: buildPrompt(kind, items), maxTokens: 8192 })
   } catch (error) {
     return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(messageOf(error)) }
   }

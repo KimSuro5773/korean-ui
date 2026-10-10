@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
+  CONTEXT_HINT,
   buildNamedReverse,
   buildPrompt,
   buildReverse,
@@ -15,6 +16,9 @@ import {
 
 // 고친 번역이 없는 세 계층을 만듭니다.
 const layers = (bundled: Dictionary, user: Dictionary) => ({ overrides: { commands: {}, config: {} }, bundled, user })
+
+// 이름과 제공자가 없는 번역 요청 항목을 만듭니다.
+const item = (source: string) => ({ source, names: [], providers: [] })
 
 const CLEAR_EN = 'Start a new session with empty context; previous session stays on disk (resumable with /resume)'
 const CLEAR_KO = '빈 컨텍스트로 새 세션을 시작합니다. 이전 세션은 디스크에 유지됩니다(/resume으로 이어서 진행할 수 있습니다)'
@@ -91,20 +95,32 @@ test('reasonText는 실패 이유를 표시 문구로 바꿉니다', () => {
 })
 
 test('buildPrompt는 번호를 붙인 원문과 응답 형식을 담습니다', () => {
-  const prompt = buildPrompt('commands', ['Show help', 'Exit'])
+  const prompt = buildPrompt('commands', [item('Show help'), item('Exit')])
   expect(prompt).toContain('"id": "1"')
   expect(prompt).toContain('"text": "Show help"')
   expect(prompt).toContain('"id": "2"')
   expect(prompt).toContain('id를 키로, 번역문을 값으로 하는 JSON 객체 하나만 출력하세요')
-  expect(buildPrompt('config', ['Theme'])).toContain('/config 설정 항목')
+  expect(buildPrompt('config', [item('Theme')])).toContain('/config 설정 항목')
 })
 
 test('buildPrompt는 그대로 둘 부분이 있는 항목에만 keep을 넣습니다', () => {
-  const prompt = buildPrompt('commands', ['Run `npm test` with --watch', 'Exit'])
+  const prompt = buildPrompt('commands', [item('Run `npm test` with --watch'), item('Exit')])
   expect(prompt).toContain('keep이 있는 항목은 keep의 문자열을 번역문에 그대로 넣으세요.')
   expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
     { id: '1', text: 'Run `npm test` with --watch', keep: ['`npm test`', '--watch'] },
     { id: '2', text: 'Exit' },
+  ])
+})
+
+test('buildPrompt는 이름과 제공자를 항목에 넣고, 번역문에 넣지 말라는 안내를 담습니다', () => {
+  const prompt = buildPrompt('commands', [
+    { source: 'toggle verbose', names: ['/verbose'], providers: ['claude-code'] },
+    { source: 'Shared', names: ['/a', '/b', '/c', '/d'], providers: ['p1', 'p2'] },
+  ])
+  expect(prompt).toContain(CONTEXT_HINT)
+  expect(JSON.parse(prompt.slice(prompt.indexOf('\n\n') + 2))).toEqual([
+    { id: '1', text: 'toggle verbose', name: '/verbose', plugin: 'claude-code' },
+    { id: '2', text: 'Shared', name: '/a, /b, /c', plugin: 'p1, p2' },
   ])
 })
 
