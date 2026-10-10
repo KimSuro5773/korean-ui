@@ -40,7 +40,7 @@ test('제공자별 번역 현황과 설정을 표시하고 Haiku를 호출하지
   await describeCommand($, 'Skipped command', OTHER, 'skipped')
   expect((await status($)).text).toBe(
     [
-      `korean-ui ${VERSION}`,
+      `버전: ${VERSION}`,
       '설정: 기본 항목 번역 켜짐, 다른 플러그인과 스킬 번역 켜짐, 미번역 알림 켜짐',
       '',
       ...HEADER,
@@ -59,7 +59,7 @@ test('여러 제공자가 쓰는 원문은 각 제공자의 행에 모두 세고
   await describeCommand($, HELP_EN, OTHER, 'other-help')
   expect((await status($)).text).toBe(
     [
-      `korean-ui ${VERSION}`,
+      `버전: ${VERSION}`,
       SETTINGS_DEFAULT,
       '',
       ...HEADER,
@@ -77,17 +77,17 @@ test('설정을 꺼 두면 꺼짐으로 표시합니다', { options: { translate
 
 test('확인한 문구가 없으면 표 대신 안내를 표시합니다', async ($, on) => {
   setupWorld(on)
-  expect((await status($)).text).toBe([`korean-ui ${VERSION}`, SETTINGS_DEFAULT, '', MESSAGES.statusNothingSeen].join('\n'))
+  expect((await status($)).text).toBe([`버전: ${VERSION}`, SETTINGS_DEFAULT, '', MESSAGES.statusNothingSeen].join('\n'))
 })
 
-test('플러그인 버전을 읽지 못하면 버전 없이 표시하고 건너뜀을 0으로 셉니다', async ($, on) => {
+test('플러그인 버전을 읽지 못하면 버전을 알 수 없다고 표시하고 건너뜀을 0으로 셉니다', async ($, on) => {
   setupWorld(on, {
     files: { 'locales/ko.json': BUNDLED, 'locales/ko-guide.md': GUIDE },
     store: { failures: { version: VERSION, counts: { [`commands:${CLEAR_EN}`]: 3 } } },
   })
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
   const lines = ((await status($)).text ?? '').split('\n')
-  expect(lines[0]).toBe('korean-ui')
+  expect(lines[0]).toBe('버전: 알 수 없음')
   expect(lines.at(-1)).toBe('| claude-code | 1 | 0 | 0 | 0 | 1 | 0 |')
 })
 

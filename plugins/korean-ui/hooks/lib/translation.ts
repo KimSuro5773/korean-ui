@@ -104,7 +104,8 @@ export const MESSAGES = {
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
   statusDescription: '번역 현황을 제공자별로 표시합니다',
-  statusName: 'korean-ui',
+  // Claude Code가 명령어의 출력 앞에 플러그인 이름을 붙여 주므로, 첫 줄에는 이름을 다시 쓰지 않고 버전만 씁니다.
+  statusVersion: (version: string | undefined) => `버전: ${version ?? '알 수 없음'}`,
   statusSettings: (settings: Settings): string => {
     const onOff = (value: boolean) => (value ? '켜짐' : '꺼짐')
     return `설정: 기본 항목 번역 ${onOff(settings.translateBuiltin)}, 다른 플러그인과 스킬 번역 ${onOff(settings.translateOthers)}, 미번역 알림 ${onOff(settings.notifyUntranslated)}`

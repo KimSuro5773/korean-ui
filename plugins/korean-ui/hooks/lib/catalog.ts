@@ -148,7 +148,7 @@ export function statusText(
   rows: readonly ProviderRow[],
   unseen: number,
 ): string {
-  const lines = [version === undefined ? MESSAGES.statusName : `${MESSAGES.statusName} ${version}`, MESSAGES.statusSettings(settings), '']
+  const lines = [MESSAGES.statusVersion(version), MESSAGES.statusSettings(settings), '']
   if (rows.length === 0) {
     lines.push(MESSAGES.statusNothingSeen)
   } else {
