@@ -37,7 +37,9 @@ export type ExportResult = { json: string; missing: number; builtinCount: number
 
 // 사용자에게 보여 주는 문구입니다.
 export const MESSAGES = {
-  commandDescription: '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다',
+  commandDescription:
+    '번역되지 않은 명령어 설명과 설정 항목을 Haiku로 번역합니다. 요청을 함께 쓰면 그 요청대로 번역하거나 고칩니다',
+  translateHint: '[요청]',
   selecting: '대상 선택 중',
   requestChoices: { proceed: '진행', cancel: '취소' },
   requestNoCandidates: '요청을 적용할 문구가 없습니다.',
@@ -48,7 +50,6 @@ export const MESSAGES = {
   nothing: '번역할 문구가 없습니다.',
   noCategory: "번역 항목이 모두 꺼져 있습니다. /config에서 '기본 항목 번역'이나 '다른 플러그인과 스킬 번역'을 켜 주세요.",
   othersHint: '다른 플러그인과 스킬도 번역하려면 /config에서 해당 항목을 켠 뒤 다시 실행하세요.',
-  usage: '사용법: /korean-ui-translate를 인자 없이 실행하면 번역되지 않은 문구를 번역합니다.',
   exportNothingSeen:
     '아직 확인한 기본 항목이 없어서 내보내지 않았습니다. 입력창에 /를 입력해 명령어 목록을 한 번 연 뒤 다시 실행하세요.',
   guideFailed: (reason: string) =>

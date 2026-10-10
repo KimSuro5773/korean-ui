@@ -15,6 +15,18 @@ import {
   withoutSources,
 } from './lib/catalog.ts'
 import {
+  type Candidate,
+  type Change,
+  SELECTION_GUIDE,
+  buildSelectionPrompt,
+  candidatesOf,
+  confirmQuestion,
+  displayName,
+  parseSelection,
+  requestResultText,
+  selectionChunks,
+} from './lib/request.ts'
+import {
   type Counts,
   type Dictionary,
   type FailedItem,
@@ -122,7 +134,11 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     state.interactive = e.isInteractive
     try {
-      await $.command.register({ name: 'korean-ui-translate', description: MESSAGES.commandDescription })
+      await $.command.register({
+        name: 'korean-ui-translate',
+        description: MESSAGES.commandDescription,
+        argumentHint: MESSAGES.translateHint,
+      })
     } catch (error) {
       $.ui.log(`번역 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
@@ -186,13 +202,13 @@ export const register: Register = (on, options) => {
     return next({ ...e, label: label ?? e.label, description: description ?? e.description })
   })
 
-  // /korean-ui-translate를 실행했을 때의 처리입니다. 인자가 없으면 번역하고, export이면 기본 항목의 번역을 파일로 내보내며,
-  // 알 수 없는 인자이면 사용법을 보여 줍니다.
+  // /korean-ui-translate를 실행했을 때의 처리입니다. 인자가 없으면 번역되지 않은 문구를 번역하고, export이면 기본 항목의 번역을
+  // 파일로 내보냅니다. 그 밖의 문장은 요청으로 보고, 그 요청대로 번역하거나 고칩니다.
   on('command.run', { command: 'korean-ui-translate' }, async ($, e) => {
     const argument = e.args.trim()
     if (argument === '') return { text: await runTranslate($, state) }
     if (argument === 'export') return { text: await runExport($, state) }
-    return { text: MESSAGES.usage }
+    return { text: await runRequest($, state, argument) }
   })
 
   // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다.
@@ -451,7 +467,13 @@ async function runTranslate($: EngineInterface, state: State, only?: SourceSet):
     showProgress($, MESSAGES.progress(done, total))
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
-        const outcome = await translateBatch($, loaded, guide, kind, promptItems(state.seen, kind, batch), version)
+        const outcome = await translateBatch($, guide, kind, promptItems(state.seen, kind, batch), {
+          version,
+          save: async (accepted) => {
+            await saveTranslations($, loaded, kind, accepted)
+            return Object.keys(accepted).length
+          },
+        })
         if (outcome.stopped !== undefined) return `${summaryText(counts)} ${outcome.stopped}${failedListText(failed)}${tail}`
         counts[kind] += outcome.saved
         counts.failed += outcome.failed.length
@@ -469,20 +491,33 @@ async function runTranslate($: EngineInterface, state: State, only?: SourceSet):
   }
 }
 
+// translateBatch가 번역문을 어떻게 요청하고 저장할지 정하는 값입니다.
+// version은 실패 횟수를 기록할 때 쓰는 플러그인 버전이고, undefined이면 실패 횟수를 읽지도 쓰지도 않습니다.
+// instruction은 자유 요청에서 사용자가 쓴 요청 문장입니다. save는 검사를 통과한 번역문을 저장하고, 실제로 저장한 수를 돌려줍니다.
+type BatchOptions = {
+  version: string | undefined
+  instruction?: string
+  save: (accepted: Readonly<Record<string, string>>) => Promise<number>
+}
+
 // 원문 몇 개를 Haiku에 한 번 보내 번역하고, 검사를 통과한 번역문을 저장합니다. 결과는 실패 횟수에도 반영합니다.
 // items는 원문에 이름과 제공자를 붙인 항목이고, 응답은 그 원문만 가지고 검사합니다.
 async function translateBatch(
   $: EngineInterface,
-  loaded: Loaded,
   guide: string,
   kind: Kind,
   items: readonly PromptItem[],
-  version: string | undefined,
+  options: BatchOptions,
 ): Promise<BatchOutcome> {
   const batch = items.map((item) => item.source)
   let reply: ModelCompleteResult
   try {
-    reply = await $.model.complete({ model: 'haiku', system: guide, prompt: buildPrompt(kind, items), maxTokens: 8192 })
+    reply = await $.model.complete({
+      model: 'haiku',
+      system: guide,
+      prompt: buildPrompt(kind, items, options.instruction),
+      maxTokens: 8192,
+    })
   } catch (error) {
     return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(messageOf(error)) }
   }
@@ -491,16 +526,152 @@ async function translateBatch(
     return { saved: 0, failed: [], stopped: MESSAGES.modelFailed(failureReason(reply.reason, status)) }
   }
   const { accepted, rejected } = reply.isAnswered ? validateReply(batch, reply.text) : rejectAll(batch, { code: 'empty-reply' })
-  const saved = Object.keys(accepted).length
-  if (saved > 0) {
+  let saved = 0
+  if (Object.keys(accepted).length > 0) {
     try {
-      await saveTranslations($, loaded, kind, accepted)
+      saved = await options.save(accepted)
     } catch (error) {
       return { saved: 0, failed: [], stopped: MESSAGES.storeFailed(messageOf(error)) }
     }
   }
-  const newlySkipped = await recordFailures($, version, kind, Object.keys(accepted), countedFailures(batch.length, rejected))
+  const counted = countedFailures(batch.length, rejected)
+  const newlySkipped = await recordFailures($, options.version, kind, Object.keys(accepted), counted)
   return { saved, failed: rejected.map((item) => ({ ...item, newlySkipped: newlySkipped.has(item.source) })) }
+}
+
+// 요청으로 고친 번역을 저장합니다. 다른 세션이 그사이 저장한 고친 번역을 지우지 않도록, 저장하기 직전에 저장소를 다시 읽어 합칩니다.
+async function saveOverrides(
+  $: EngineInterface,
+  loaded: Loaded,
+  kind: Kind,
+  accepted: Readonly<Record<string, string>>,
+): Promise<void> {
+  const latest = parseDictionary(await $.store.get(STORE_OVERRIDES))
+  const merged = withTranslations(latest, kind, accepted)
+  await $.store.set(STORE_OVERRIDES, merged)
+  retireRemoved(loaded.retired, loaded.overrides, merged)
+  loaded.overrides = merged
+}
+
+// /korean-ui-translate <요청>의 처리입니다. Haiku가 먼저 요청에 해당하는 문구를 고르고, 고른 문구만 요청대로 번역해서
+// 고친 번역에 저장합니다. 이미 번역문이 있는 문구가 대상에 있으면 번역하기 전에 사용자에게 확인을 받습니다.
+// 끝나면 결과와 관계없이 진행 표시를 지우고 메뉴를 다시 그리게 합니다.
+async function runRequest($: EngineInterface, state: State, request: string): Promise<string> {
+  if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
+  await collectSources($)
+  const loaded = await ensureLoaded($, state)
+  await refreshStored($, loaded)
+  const candidates = candidatesOf(state.seen, state.settings, layersOf(loaded))
+  if (candidates.length === 0) return withOthersHint(MESSAGES.requestNoCandidates, state.settings)
+  let guide: string
+  try {
+    guide = await $.fs.read(`${$.plugin.root}/locales/ko-guide.md`)
+  } catch (error) {
+    return MESSAGES.guideFailed(messageOf(error))
+  }
+  try {
+    showProgress($, MESSAGES.selecting)
+    const targets = await selectTargets($, request, candidates)
+    if (typeof targets === 'string') return targets
+    if (targets.length === 0) return withOthersHint(MESSAGES.requestNoTargets, state.settings)
+    const revises = targets.some((target) => target.current !== undefined)
+    if (revises && !(await confirmRequest($, targets))) return MESSAGES.requestCanceled
+    return await translateTargets($, loaded, guide, request, targets)
+  } finally {
+    showProgress($, undefined)
+    $.ui.invalidate('command.describe')
+    $.ui.invalidate('config.describe')
+  }
+}
+
+// 요청에 해당하는 후보를 Haiku에게 고르게 합니다. 후보가 많으면 나누어 여러 번 호출하고, 고른 후보를 합칩니다.
+// 호출에 실패하거나 응답을 읽을 수 없으면, 아무것도 고르지 않고 사용자에게 보여 줄 문장을 돌려줍니다.
+async function selectTargets(
+  $: EngineInterface,
+  request: string,
+  candidates: readonly Candidate[],
+): Promise<Candidate[] | string> {
+  const targets: Candidate[] = []
+  for (const chunk of selectionChunks(candidates)) {
+    let reply: ModelCompleteResult
+    try {
+      reply = await $.model.complete({
+        model: 'haiku',
+        system: SELECTION_GUIDE,
+        prompt: buildSelectionPrompt(request, chunk),
+        maxTokens: 4096,
+      })
+    } catch (error) {
+      return MESSAGES.modelFailed(messageOf(error))
+    }
+    if (!reply.isAnswered) {
+      if (reply.reason === 'empty-reply') return MESSAGES.requestUnreadable
+      const status = 'status' in reply ? reply.status : null
+      return MESSAGES.modelFailed(failureReason(reply.reason, status))
+    }
+    const picked = parseSelection(chunk, reply.text)
+    if (picked === undefined) return MESSAGES.requestUnreadable
+    targets.push(...picked)
+  }
+  return targets
+}
+
+// 기존 번역을 바꿔도 되는지 사용자에게 묻습니다. '진행'을 골랐을 때만 true를 돌려주고,
+// 취소했거나, 선택지와 다른 답을 입력했거나, 대화상자를 닫거나 띄울 수 없으면 false를 돌려줍니다.
+async function confirmRequest($: EngineInterface, targets: readonly Candidate[]): Promise<boolean> {
+  const { proceed, cancel } = MESSAGES.requestChoices
+  try {
+    return (await $.ui.ask(confirmQuestion(targets), [proceed, cancel])) === proceed
+  } catch {
+    return false
+  }
+}
+
+// 고른 대상을 요청대로 번역해서 고친 번역에 저장하고, 바뀐 문구를 보여 줄 글을 돌려줍니다.
+// 지금 표시 중인 번역문과 같은 번역문은 저장하지 않습니다. 3번 실패한 기록은 읽지도 쓰지도 않습니다.
+async function translateTargets(
+  $: EngineInterface,
+  loaded: Loaded,
+  guide: string,
+  request: string,
+  targets: readonly Candidate[],
+): Promise<string> {
+  const counts: Record<Kind, number> = { commands: 0, config: 0 }
+  const changes: Change[] = []
+  const failed: FailedItem[] = []
+  let unchanged = 0
+  let done = 0
+  showProgress($, MESSAGES.progress(done, targets.length))
+  for (const kind of KINDS) {
+    const bySource = new Map(targets.filter((target) => target.kind === kind).map((target) => [target.source, target]))
+    for (const batch of makeBatches([...bySource.keys()])) {
+      const items = batch.flatMap((source) => bySource.get(source) ?? [])
+      const outcome = await translateBatch($, guide, kind, items, {
+        version: undefined,
+        instruction: request,
+        save: async (accepted) => {
+          const changed = items.filter((item) => Object.hasOwn(accepted, item.source) && accepted[item.source] !== item.current)
+          unchanged += Object.keys(accepted).length - changed.length
+          if (changed.length === 0) return 0
+          const fresh = Object.fromEntries(changed.map((item) => [item.source, accepted[item.source] ?? '']))
+          await saveOverrides($, loaded, kind, fresh)
+          for (const item of changed) {
+            const before = item.current === undefined ? {} : { before: item.current }
+            changes.push({ name: displayName(item), ...before, after: fresh[item.source] ?? '' })
+          }
+          return changed.length
+        },
+      })
+      if (outcome.stopped !== undefined) {
+        return `${requestResultText(counts, changes, unchanged, failed.length)} ${outcome.stopped}${failedListText(failed)}`
+      }
+      counts[kind] += outcome.saved
+      failed.push(...outcome.failed)
+      done += batch.length
+      showProgress($, MESSAGES.progress(done, targets.length))
+    }
+  }
+  return `${requestResultText(counts, changes, unchanged, failed.length)}${failedListText(failed)}`
 }
 
 // 번역문을 사용자 번역 사전에 저장합니다. 다른 세션이 그사이 저장한 번역을 지우지 않도록, 저장하기 직전에 저장소를 다시 읽어 합칩니다.

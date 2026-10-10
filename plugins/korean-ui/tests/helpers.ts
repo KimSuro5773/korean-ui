@@ -33,6 +33,8 @@ export type World = {
   logs: string[]
   written: { path: string; text: string }[]
   prompts: string[]
+  // $.model.complete에 prompts와 같은 순서로 보낸 system입니다. system 없이 보냈으면 빈 문자열입니다.
+  systems: string[]
   questions: string[]
   registered: unknown[]
   clock: ReturnType<typeof mock.clock>
@@ -74,6 +76,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     logs: [],
     written: [],
     prompts: [],
+    systems: [],
     questions: [],
     registered: [],
     clock: mock.clock(on),
@@ -135,6 +138,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   on('session.start', () => ({ cwd: '/work' }))
   on('model.complete', ($, e) => {
     world.prompts.push(String(e.prompt))
+    world.systems.push(String(e.system ?? ''))
     const next = replies.shift()
     if (typeof next === 'function') return (next as () => unknown)()
     return next ?? answer({})
