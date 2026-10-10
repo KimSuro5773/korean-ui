@@ -31,6 +31,7 @@ import {
   parseDictionary,
   parseFailures,
   parseNotified,
+  providerLabel,
   readSettings,
   recordSeen,
   rejectAll,
@@ -118,7 +119,7 @@ export const register: Register = (on, options) => {
   // 메뉴와 /help에 표시할 명령어 설명을 한국어로 바꿉니다.
   on('command.describe', async ($, e, next) => {
     state.described.set(e.command, e.description)
-    const description = await translateText($, state, 'commands', e.provider.plugin, e.description)
+    const description = await translateText($, state, 'commands', e.provider.plugin, `/${e.command}`, e.description)
     return description === undefined ? next(e) : next({ ...e, description })
   })
 
@@ -148,9 +149,9 @@ export const register: Register = (on, options) => {
 
   // /config에 표시할 항목 이름과 도움말을 한국어로 바꿉니다.
   on('config.describe', async ($, e, next) => {
-    const label = await translateText($, state, 'config', e.provider.plugin, e.label)
+    const label = await translateText($, state, 'config', e.provider.plugin, e.key, e.label)
     const description =
-      e.description === undefined ? undefined : await translateText($, state, 'config', e.provider.plugin, e.description)
+      e.description === undefined ? undefined : await translateText($, state, 'config', e.provider.plugin, e.key, e.description)
     if (label === undefined && description === undefined) return next(e)
     return next({ ...e, label: label ?? e.label, description: description ?? e.description })
   })
@@ -169,18 +170,19 @@ export const register: Register = (on, options) => {
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
-// 번역문이 없으면 미번역 알림을 예약합니다.
+// 번역문이 없으면 미번역 알림을 예약합니다. name은 그 문구가 붙은 명령어 이름('/commit')이나 /config 항목의 key입니다.
 async function translateText(
   $: EngineInterface,
   state: State,
   kind: Kind,
   providerPlugin: string,
+  name: string,
   source: string,
 ): Promise<string | undefined> {
   const category = categoryOf(providerPlugin, $.plugin.name)
   const { base, state: current } = splitState(source)
   if (category === 'self' || !needsTranslation(base)) return undefined
-  recordSeen(state.seen, kind, base, category)
+  recordSeen(state.seen, kind, base, category, name, providerLabel(providerPlugin))
   if (!isEnabled(category, state.settings)) return undefined
   const loaded = await ensureLoaded($, state)
   const translated = lookup(loaded.bundled, loaded.user, kind, base)

@@ -17,6 +17,7 @@ import {
   parseDictionary,
   parseFailures,
   parseNotified,
+  providerLabel,
   readSettings,
   recordSeen,
   skippedCount,
@@ -104,21 +105,31 @@ test('lookup은 기본 번역표를 먼저 찾고 객체의 기본 속성은 무
   expect(lookup(bundled, user, 'config', 'A')).toBeUndefined()
 })
 
-test('recordSeen은 같은 원문이 기본 항목으로 한 번이라도 나오면 기본 항목으로 기록합니다', () => {
+test('recordSeen은 같은 원문을 쓰는 이름과 제공자를 모두 모으고, 기본 항목이면 기본 항목으로 남깁니다', () => {
   const seen = emptySeen()
-  recordSeen(seen, 'commands', 'A', 'others')
-  recordSeen(seen, 'commands', 'A', 'builtin')
-  recordSeen(seen, 'commands', 'A', 'others')
-  expect(seen.commands.get('A')).toBe('builtin')
+  recordSeen(seen, 'commands', 'A', 'others', '/a', 'other-plugin')
+  recordSeen(seen, 'commands', 'A', 'builtin', '/b', 'claude-code')
+  recordSeen(seen, 'commands', 'A', 'others', '/a', 'other-plugin')
+  expect(seen.commands.get('A')).toEqual({
+    category: 'builtin',
+    names: new Set(['/a', '/b']),
+    providers: new Set(['other-plugin', 'claude-code']),
+  })
+})
+
+test('providerLabel은 기본 항목을 claude-code로, 다른 플러그인을 마켓플레이스를 뗀 이름으로 바꿉니다', () => {
+  expect(providerLabel('engine')).toBe('claude-code')
+  expect(providerLabel('other-plugin@market')).toBe('other-plugin')
+  expect(providerLabel('local-plugin')).toBe('local-plugin')
 })
 
 test('untranslated는 번역하도록 켜 둔 항목 중에서 번역문이 없는 원문만 정렬해서 돌려줍니다', () => {
   const seen = emptySeen()
-  recordSeen(seen, 'commands', 'Zeta', 'builtin')
-  recordSeen(seen, 'commands', 'Alpha', 'builtin')
-  recordSeen(seen, 'commands', 'Known', 'builtin')
-  recordSeen(seen, 'commands', 'Other', 'others')
-  recordSeen(seen, 'config', 'Theme', 'builtin')
+  recordSeen(seen, 'commands', 'Zeta', 'builtin', '/zeta', 'claude-code')
+  recordSeen(seen, 'commands', 'Alpha', 'builtin', '/alpha', 'claude-code')
+  recordSeen(seen, 'commands', 'Known', 'builtin', '/known', 'claude-code')
+  recordSeen(seen, 'commands', 'Other', 'others', '/other', 'other-plugin')
+  recordSeen(seen, 'config', 'Theme', 'builtin', 'theme', 'claude-code')
   const bundled = { commands: { Known: '알려진 문구' }, config: {} }
   expect(untranslated(seen, DEFAULTS, bundled, EMPTY)).toEqual({ commands: ['Alpha', 'Zeta'], config: ['Theme'] })
   expect(untranslated(seen, ON_ALL, bundled, EMPTY).commands).toEqual(['Alpha', 'Other', 'Zeta'])
@@ -144,11 +155,11 @@ test('withTranslations는 기존 번역을 유지하고 새 번역을 더하며 
 
 test('buildExport는 기존 기본 번역표를 모두 남기고, 확인한 기본 항목의 새 번역을 더해 정렬합니다', () => {
   const seen = emptySeen()
-  recordSeen(seen, 'commands', 'Zeta', 'builtin')
-  recordSeen(seen, 'commands', 'Alpha', 'builtin')
-  recordSeen(seen, 'commands', 'Missing', 'builtin')
-  recordSeen(seen, 'commands', 'Other', 'others')
-  recordSeen(seen, 'config', 'Theme', 'builtin')
+  recordSeen(seen, 'commands', 'Zeta', 'builtin', '/zeta', 'claude-code')
+  recordSeen(seen, 'commands', 'Alpha', 'builtin', '/alpha', 'claude-code')
+  recordSeen(seen, 'commands', 'Missing', 'builtin', '/missing', 'claude-code')
+  recordSeen(seen, 'commands', 'Other', 'others', '/other', 'other-plugin')
+  recordSeen(seen, 'config', 'Theme', 'builtin', 'theme', 'claude-code')
   // Conditional은 이번에 화면에 보이지 않은 기본 항목입니다. 기존 번역표에 있으므로 그대로 남아야 합니다.
   const bundled = { commands: { Zeta: '제타', Conditional: '조건부' }, config: { Theme: '테마' } }
   const user = { commands: { Alpha: '알파', Other: '다른 것' }, config: {} }

@@ -18,8 +18,12 @@ export type Settings = {
   notifyUntranslated: boolean
 }
 
-// 화면에 표시된 영어 원문과, 그 원문을 누가 제공했는지 기록합니다.
-export type Seen = Record<Kind, Map<string, Category>>
+// 화면에 표시된 영어 원문 하나의 기록입니다. names는 그 원문을 쓰는 명령어 이름('/commit')이나 /config 항목의 key이고,
+// providers는 그 원문을 제공하는 제공자의 표시 이름입니다.
+export type SeenEntry = { category: Category; names: Set<string>; providers: Set<string> }
+
+// 화면에 표시된 영어 원문과, 그 원문을 누가 어떤 이름으로 제공했는지 기록합니다.
+export type Seen = Record<Kind, Map<string, SeenEntry>>
 
 // 번역 명령어가 번역한 개수와 실패한 개수입니다. newlySkipped는 실패한 원문 중 이번 실행에서 실패 횟수가 3 이상이 된 수입니다.
 export type Counts = { commands: number; config: number; failed: number; newlySkipped: number }
@@ -128,6 +132,14 @@ function pluginBase(name: string): string {
   return at === -1 ? name : name.slice(0, at)
 }
 
+// Claude Code 기본 항목의 제공자를 사용자에게 보여 줄 때 쓰는 이름입니다.
+export const BUILTIN_PROVIDER = 'claude-code'
+
+// 제공자를 사용자에게 보여 줄 이름으로 바꿉니다. Claude Code는 'claude-code', 다른 플러그인은 '@마켓플레이스'를 뗀 이름입니다.
+export function providerLabel(providerPlugin: string): string {
+  return providerPlugin === 'engine' ? BUILTIN_PROVIDER : pluginBase(providerPlugin)
+}
+
 const CURRENTLY = /^(.*\S) \(currently (.+)\)$/
 
 // 설명 끝의 ' (currently Opus 5.5)' 같은 현재 상태 표시를 떼어 냅니다. 상태가 바뀌어도 같은 번역문을 찾기 위해서입니다.
@@ -165,17 +177,24 @@ export function lookup(bundled: Dictionary, user: Dictionary, kind: Kind, source
 }
 
 // 화면에 표시된 원문을 기록합니다. Claude Code도 같은 원문을 쓰면 Claude Code 항목으로 남겨서 내보내기에서 빠지지 않게 합니다.
-export function recordSeen(seen: Seen, kind: Kind, source: string, category: Category): void {
-  if (seen[kind].get(source) === 'builtin') return
-  seen[kind].set(source, category)
+// 같은 원문을 여러 명령어나 여러 제공자가 쓰면 이름과 제공자를 모두 모읍니다.
+export function recordSeen(seen: Seen, kind: Kind, source: string, category: Category, name: string, provider: string): void {
+  const entry = seen[kind].get(source)
+  if (entry === undefined) {
+    seen[kind].set(source, { category, names: new Set([name]), providers: new Set([provider]) })
+    return
+  }
+  if (entry.category !== 'builtin') entry.category = category
+  entry.names.add(name)
+  entry.providers.add(provider)
 }
 
 // 번역하도록 켜 둔 항목 중에서 아직 번역문이 없는 원문을 정렬해서 돌려줍니다.
 export function untranslated(seen: Seen, settings: Settings, bundled: Dictionary, user: Dictionary): Record<Kind, string[]> {
   const result: Record<Kind, string[]> = { commands: [], config: [] }
   for (const kind of KINDS) {
-    for (const [source, category] of seen[kind]) {
-      if (isEnabled(category, settings) && lookup(bundled, user, kind, source) === undefined) result[kind].push(source)
+    for (const [source, entry] of seen[kind]) {
+      if (isEnabled(entry.category, settings) && lookup(bundled, user, kind, source) === undefined) result[kind].push(source)
     }
     result[kind].sort()
   }
@@ -215,8 +234,8 @@ export function buildExport(seen: Seen, bundled: Dictionary, user: Dictionary): 
   let builtinCount = 0
   for (const kind of KINDS) {
     const merged: Record<string, string> = { ...bundled[kind] }
-    for (const [source, category] of seen[kind]) {
-      if (category !== 'builtin') continue
+    for (const [source, entry] of seen[kind]) {
+      if (entry.category !== 'builtin') continue
       builtinCount += 1
       const translated = lookup(bundled, user, kind, source)
       if (translated === undefined) missing += 1
