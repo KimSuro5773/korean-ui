@@ -1,5 +1,17 @@
 import type { EngineInterface, ModelCompleteResult, Register } from 'claude-code'
 import {
+  type SourceSet,
+  countSkipped,
+  countStored,
+  hasFailures,
+  matchProvider,
+  providersOf,
+  restrictTo,
+  sourcesOf,
+  withoutFailures,
+  withoutSources,
+} from './lib/catalog.ts'
+import {
   type Counts,
   type Dictionary,
   type FailedItem,
@@ -112,7 +124,11 @@ export const register: Register = (on, options) => {
       $.ui.log(`번역 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
     try {
-      await $.command.register({ name: 'korean-ui-reset', description: MESSAGES.resetDescription })
+      await $.command.register({
+        name: 'korean-ui-reset',
+        description: MESSAGES.resetDescription,
+        argumentHint: MESSAGES.resetHint,
+      })
     } catch (error) {
       $.ui.log(`번역 지우기 명령어를 등록하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
     }
@@ -171,8 +187,9 @@ export const register: Register = (on, options) => {
     return { text: MESSAGES.usage }
   })
 
-  // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다. 인자는 쓰지 않습니다.
-  on('command.run', { command: 'korean-ui-reset' }, async ($) => ({ text: await runReset($, state) }))
+  // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다.
+  // 인자로 제공자 이름을 받으면 그 제공자의 번역만 지웁니다.
+  on('command.run', { command: 'korean-ui-reset' }, async ($, e) => ({ text: await runReset($, state, e.args.trim()) }))
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
@@ -396,7 +413,8 @@ function showProgress($: EngineInterface, text: string | undefined): void {
 // 다른 세션이 저장한 번역을 쓰도록 시작할 때 사전을 다시 읽고, 끝나면 결과와 관계없이 메뉴를 다시 그리게 합니다.
 // 3번 이상 실패한 문구는 보내지 않고, 건너뛴 수를 결과 끝에 알려 줍니다.
 // 번역하는 동안 묶음 하나를 처리할 때마다 처리한 문구 수를 상태 줄에 표시하고, 끝나면 지웁니다.
-async function runTranslate($: EngineInterface, state: State): Promise<string> {
+// only가 있으면 그 원문만 번역하고, 다른 플러그인 번역 안내와 건너뛴 문구 안내는 붙이지 않습니다.
+async function runTranslate($: EngineInterface, state: State, only?: SourceSet): Promise<string> {
   if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
   await collectSources($)
   const loaded = await ensureLoaded($, state)
@@ -404,9 +422,11 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
   try {
     const version = await readVersion($)
     const failures = await readFailures($, version)
-    const { pending, skipped } = splitSkipped(untranslated(state.seen, state.settings, layersOf(loaded)), failures)
-    const tail = skippedText(skipped)
-    if (pending.commands.length + pending.config.length === 0) return `${withOthersHint(MESSAGES.nothing, state.settings)}${tail}`
+    const all = untranslated(state.seen, state.settings, layersOf(loaded))
+    const { pending, skipped } = splitSkipped(only === undefined ? all : restrictTo(all, only), failures)
+    const tail = only === undefined ? skippedText(skipped) : ''
+    const withHint = (text: string) => (only === undefined ? withOthersHint(text, state.settings) : text)
+    if (pending.commands.length + pending.config.length === 0) return `${withHint(MESSAGES.nothing)}${tail}`
     let guide: string
     try {
       guide = await $.fs.read(`${$.plugin.root}/locales/ko-guide.md`)
@@ -430,7 +450,7 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
         showProgress($, MESSAGES.progress(done, total))
       }
     }
-    return `${withOthersHint(summaryText(counts), state.settings)}${failedListText(failed)}${tail}`
+    return `${withHint(summaryText(counts))}${failedListText(failed)}${tail}`
   } finally {
     showProgress($, undefined)
     $.ui.invalidate('command.describe')
@@ -506,42 +526,147 @@ async function runExport($: EngineInterface, state: State): Promise<string> {
   return MESSAGES.exported(path, result.missing)
 }
 
-// Haiku로 번역한 문구와 실패 횟수를, 사용자에게 확인을 받은 뒤 저장소에서 지웁니다. 기본 번역표와 알림 기록은 지우지 않습니다.
-// '지우고 다시 번역'을 고르면 지운 뒤 번역 명령어와 같은 번역을 실행합니다. 대화상자를 닫거나 띄울 수 없으면 취소로 봅니다.
-// 실패 횟수만 지우지 못하면, 건너뛰던 문구를 다시 시도한다고 하지 않고 기록이 남았다고 알려 줍니다.
-async function runReset($: EngineInterface, state: State): Promise<string> {
+// /korean-ui-reset을 실행했을 때의 처리입니다. 인자가 없으면 Haiku로 번역한 문구를 모두 지우고,
+// 제공자 이름이 있으면 그 제공자의 번역만 지웁니다.
+function runReset($: EngineInterface, state: State, argument: string): Promise<string> {
+  return argument === '' ? resetAll($, state) : resetProvider($, state, argument)
+}
+
+// 지울지 묻는 대화상자에서 고른 답입니다.
+type ResetAnswer = 'remove' | 'retranslate'
+
+// 지울지 묻는 대화상자를 띄우고 고른 답을 돌려줍니다.
+// 취소했거나, 선택지와 다른 답을 입력했거나, 대화상자를 닫거나 띄울 수 없으면 undefined를 돌려줍니다.
+async function askReset($: EngineInterface, question: string): Promise<ResetAnswer | undefined> {
+  const { remove, retranslate, cancel } = MESSAGES.resetChoices
+  try {
+    const answer = await $.ui.ask(question, [remove, retranslate, cancel])
+    if (answer === remove) return 'remove'
+    return answer === retranslate ? 'retranslate' : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// 지운 결과를 한 문장으로 잇고, '지우고 다시 번역'을 골랐으면 이어서 번역한 결과를 붙입니다.
+// only가 있으면 그 원문만 다시 번역합니다.
+async function finishReset(
+  $: EngineInterface,
+  state: State,
+  answer: ResetAnswer,
+  parts: readonly string[],
+  only?: SourceSet,
+): Promise<string> {
+  $.ui.invalidate('command.describe')
+  $.ui.invalidate('config.describe')
+  const done = parts.filter((part) => part !== '').join(' ')
+  if (answer === 'remove') return `${done} ${MESSAGES.resetRetranslateHint}`
+  return `${done}\n${await runTranslate($, state, only)}`
+}
+
+// Haiku로 번역한 문구(자동 번역과 고친 번역)와 실패 횟수를, 사용자에게 확인을 받은 뒤 저장소에서 지웁니다.
+// 기본 번역표와 알림 기록은 지우지 않습니다. '지우고 다시 번역'을 고르면 지운 뒤 번역 명령어와 같은 번역을 실행합니다.
+// 고친 번역이나 실패 횟수만 지우지 못하면, 지웠다고 하지 않고 남았다고 원인과 함께 알려 줍니다.
+async function resetAll($: EngineInterface, state: State): Promise<string> {
   const loaded = await ensureLoaded($, state)
   await refreshStored($, loaded)
-  const translations = countEntries(loaded.user)
+  const auto = countEntries(loaded.user)
+  const fixed = countEntries(loaded.overrides)
   const skipped = skippedCount(await readFailures($, await readVersion($)))
-  if (translations === 0 && skipped === 0) return MESSAGES.resetNothing
-  const { remove, retranslate, cancel } = MESSAGES.resetChoices
-  let answer: string
-  try {
-    answer = await $.ui.ask(MESSAGES.resetQuestion(translations, skipped), [remove, retranslate, cancel])
-  } catch {
-    return MESSAGES.resetCanceled
-  }
-  if (answer !== remove && answer !== retranslate) return MESSAGES.resetCanceled
+  if (auto + fixed === 0 && skipped === 0) return MESSAGES.resetNothing
+  const answer = await askReset($, MESSAGES.resetQuestion(auto + fixed, skipped))
+  if (answer === undefined) return MESSAGES.resetCanceled
   try {
     await $.store.delete(STORE_DICTIONARY)
   } catch (error) {
     return MESSAGES.resetFailed(messageOf(error))
   }
-  let failuresKept: string | undefined
+  retireRemoved(loaded.retired, loaded.user, emptyDictionary())
+  loaded.user = emptyDictionary()
+  let removed = auto
+  const notes: string[] = []
+  try {
+    await $.store.delete(STORE_OVERRIDES)
+    retireRemoved(loaded.retired, loaded.overrides, emptyDictionary())
+    loaded.overrides = emptyDictionary()
+    removed += fixed
+  } catch (error) {
+    notes.push(MESSAGES.resetOverridesKept(messageOf(error)))
+  }
+  let skippedRemoved = skipped
   try {
     await $.store.delete(STORE_FAILURES)
   } catch (error) {
-    failuresKept = MESSAGES.resetFailuresKept(messageOf(error))
+    skippedRemoved = 0
+    notes.push(MESSAGES.resetFailuresKept(messageOf(error)))
   }
-  const cleared = emptyDictionary()
-  retireRemoved(loaded.retired, loaded.user, cleared)
-  loaded.user = cleared
-  $.ui.invalidate('command.describe')
-  $.ui.invalidate('config.describe')
-  const done = [MESSAGES.resetDone(translations, failuresKept === undefined ? skipped : 0), failuresKept ?? '']
-    .filter((part) => part !== '')
-    .join(' ')
-  if (answer === remove) return `${done} ${MESSAGES.resetRetranslateHint}`
-  return `${done}\n${await runTranslate($, state)}`
+  return finishReset($, state, answer, [MESSAGES.resetDone(removed, skippedRemoved), ...notes])
+}
+
+// 저장소의 사전에서 그 원문들의 번역문을 빼고 저장합니다. 다른 세션이 저장한 번역을 지우지 않도록 저장하기 직전에 다시 읽습니다.
+// 뺄 번역문이 없으면 저장소에 쓰지 않습니다. 저장소에 남은 사전과 뺀 번역문의 수를 돌려줍니다.
+async function removeStored(
+  $: EngineInterface,
+  key: string,
+  sources: SourceSet,
+): Promise<{ next: Dictionary; removed: number }> {
+  const latest = parseDictionary(await $.store.get(key))
+  const removed = countStored(latest, sources)
+  if (removed === 0) return { next: latest, removed }
+  const next = withoutSources(latest, sources)
+  await $.store.set(key, next)
+  return { next, removed }
+}
+
+// 저장소의 실패 기록에서 그 원문들의 횟수를 빼고 저장합니다. 3번 이상 실패해서 건너뛰던 원문 중 뺀 수를 돌려줍니다.
+// 버전을 모르면 실패 기록을 쓰지 않으므로 아무것도 하지 않습니다.
+async function removeFailures($: EngineInterface, version: string | undefined, sources: SourceSet): Promise<number> {
+  if (version === undefined) return 0
+  const latest = parseFailures(await $.store.get(STORE_FAILURES), version)
+  if (!hasFailures(latest, sources)) return 0
+  await $.store.set(STORE_FAILURES, withoutFailures(latest, sources))
+  return countSkipped(latest, sources)
+}
+
+// 제공자 하나의 원문에 해당하는 자동 번역, 고친 번역, 실패 횟수만 사용자에게 확인을 받은 뒤 지웁니다.
+// 이름이 일치하는 제공자가 없으면 아무것도 지우지 않고 지정할 수 있는 이름을 알려 줍니다.
+// '지우고 다시 번역'을 고르면 그 제공자의 원문만 다시 번역합니다.
+async function resetProvider($: EngineInterface, state: State, argument: string): Promise<string> {
+  await collectSources($)
+  const loaded = await ensureLoaded($, state)
+  await refreshStored($, loaded)
+  const provider = matchProvider(state.seen, argument)
+  if (provider === undefined) return MESSAGES.resetUnknownProvider(argument, providersOf(state.seen))
+  const sources = sourcesOf(state.seen, provider)
+  const version = await readVersion($)
+  const translations = countStored(loaded.user, sources) + countStored(loaded.overrides, sources)
+  const skipped = countSkipped(await readFailures($, version), sources)
+  if (translations === 0 && skipped === 0) return MESSAGES.resetProviderNothing(provider)
+  const answer = await askReset($, MESSAGES.resetQuestion(translations, skipped, provider))
+  if (answer === undefined) return MESSAGES.resetCanceled
+  let removed: number
+  try {
+    const result = await removeStored($, STORE_DICTIONARY, sources)
+    retireRemoved(loaded.retired, loaded.user, result.next)
+    loaded.user = result.next
+    removed = result.removed
+  } catch (error) {
+    return MESSAGES.resetFailed(messageOf(error))
+  }
+  const notes: string[] = []
+  try {
+    const result = await removeStored($, STORE_OVERRIDES, sources)
+    retireRemoved(loaded.retired, loaded.overrides, result.next)
+    loaded.overrides = result.next
+    removed += result.removed
+  } catch (error) {
+    notes.push(MESSAGES.resetOverridesKept(messageOf(error)))
+  }
+  let skippedRemoved = 0
+  try {
+    skippedRemoved = await removeFailures($, version, sources)
+  } catch (error) {
+    notes.push(MESSAGES.resetFailuresKept(messageOf(error)))
+  }
+  return finishReset($, state, answer, [MESSAGES.resetDone(removed, skippedRemoved, provider), ...notes], sources)
 }

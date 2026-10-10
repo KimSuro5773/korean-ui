@@ -65,21 +65,33 @@ export const MESSAGES = {
     emptyReply: '응답이 비어 있음',
   },
   skipped: (count: number) => `이번 실행에서는 3번 실패한 문구 ${count}개를 건너뛰었습니다. 플러그인이 업데이트되면 다시 번역합니다.`,
-  resetDescription: 'Haiku로 번역해서 저장한 문구를 모두 지웁니다',
+  resetDescription: 'Haiku로 번역해서 저장한 문구를 지웁니다. 플러그인 이름을 쓰면 그 플러그인의 번역만 지웁니다',
+  resetHint: '[플러그인]',
   resetNothing: '지울 번역이 없습니다.',
   resetChoices: { remove: '지우기', retranslate: '지우고 다시 번역', cancel: '취소' },
-  resetQuestion: (translations: number, skipped: number): string => {
-    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지워서 다음 번역 때 다시 시도하게 할까요?`
-    const lead = `기본 번역표의 번역은 그대로 남습니다. Haiku로 번역한 문구 ${translations}개`
-    if (skipped === 0) return `${lead}를 모두 지울까요?`
-    return `${lead}와 3번 실패한 문구의 기록 ${skipped}개를 모두 지울까요?`
+  // provider를 넘기면 그 제공자의 번역만 지우는 질문이 됩니다.
+  resetQuestion: (translations: number, skipped: number, provider?: string): string => {
+    const owner = provider === undefined ? '' : `${provider}의 `
+    const all = provider === undefined ? '모두 ' : ''
+    if (translations === 0) return `${owner}3번 실패한 문구의 기록 ${skipped}개를 지워서 다음 번역 때 다시 시도하게 할까요?`
+    const lead = `기본 번역표의 번역은 그대로 남습니다. ${owner}Haiku로 번역한 문구 ${translations}개`
+    if (skipped === 0) return `${lead}를 ${all}지울까요?`
+    return `${lead}와 3번 실패한 문구의 기록 ${skipped}개를 ${all}지울까요?`
   },
-  resetDone: (translations: number, skipped: number): string => {
+  resetDone: (translations: number, skipped: number, provider?: string): string => {
+    const owner = provider === undefined ? '' : `${provider}의 `
     const retry = '건너뛰던 문구는 다음 번역 때 다시 시도합니다.'
-    if (skipped === 0) return translations > 0 ? `Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : ''
-    if (translations === 0) return `3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
-    return `Haiku로 번역한 문구 ${translations}개와 3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+    if (skipped === 0) return translations > 0 ? `${owner}Haiku로 번역한 문구 ${translations}개를 지웠습니다.` : ''
+    if (translations === 0) return `${owner}3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
+    return `${owner}Haiku로 번역한 문구 ${translations}개와 3번 실패한 문구의 기록 ${skipped}개를 지웠습니다. ${retry}`
   },
+  resetProviderNothing: (provider: string) => `${provider}의 지울 번역이 없습니다.`,
+  resetUnknownProvider: (name: string, providers: readonly string[]): string => {
+    const lead = `일치하는 제공자가 없어서 아무것도 지우지 않았습니다(입력한 이름: ${name}).`
+    if (providers.length === 0) return `${lead} 아직 확인한 문구가 없습니다.`
+    return `${lead} 지정할 수 있는 이름: ${providers.join(', ')}`
+  },
+  resetOverridesKept: (reason: string) => `고친 번역은 지우지 못해서 그대로 남아 있습니다. 원인: ${reason}.`,
   resetFailuresKept: (reason: string) => `3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: ${reason}.`,
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
