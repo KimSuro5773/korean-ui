@@ -382,9 +382,20 @@ async function collectSources($: EngineInterface): Promise<void> {
   }
 }
 
+// 입력창 아래 상태 줄에 진행 상황을 표시합니다. undefined를 넘기면 표시를 지웁니다.
+// 표시하지 못해도 번역은 계속하도록, 오류를 잡아서 디버그 로그에 남깁니다.
+function showProgress($: EngineInterface, text: string | undefined): void {
+  try {
+    $.ui.status(text)
+  } catch (error) {
+    $.ui.log(`진행 상황을 표시하지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
+  }
+}
+
 // 번역문이 없는 문구를 Haiku로 번역해서 사용자 번역 사전에 저장하고, 결과를 요약한 문장을 돌려줍니다.
 // 다른 세션이 저장한 번역을 쓰도록 시작할 때 사전을 다시 읽고, 끝나면 결과와 관계없이 메뉴를 다시 그리게 합니다.
 // 3번 이상 실패한 문구는 보내지 않고, 건너뛴 수를 결과 끝에 알려 줍니다.
+// 번역하는 동안 묶음 하나를 처리할 때마다 처리한 문구 수를 상태 줄에 표시하고, 끝나면 지웁니다.
 async function runTranslate($: EngineInterface, state: State): Promise<string> {
   if (!state.settings.translateBuiltin && !state.settings.translateOthers) return MESSAGES.noCategory
   await collectSources($)
@@ -404,6 +415,9 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
     }
     const counts: Counts = { commands: 0, config: 0, failed: 0, newlySkipped: 0 }
     const failed: FailedItem[] = []
+    const total = pending.commands.length + pending.config.length
+    let done = 0
+    showProgress($, MESSAGES.progress(done, total))
     for (const kind of KINDS) {
       for (const batch of makeBatches(pending[kind])) {
         const outcome = await translateBatch($, loaded, guide, kind, promptItems(state.seen, kind, batch), version)
@@ -412,10 +426,13 @@ async function runTranslate($: EngineInterface, state: State): Promise<string> {
         counts.failed += outcome.failed.length
         counts.newlySkipped += outcome.failed.filter((item) => item.newlySkipped === true).length
         failed.push(...outcome.failed)
+        done += batch.length
+        showProgress($, MESSAGES.progress(done, total))
       }
     }
     return `${withOthersHint(summaryText(counts), state.settings)}${failedListText(failed)}${tail}`
   } finally {
+    showProgress($, undefined)
     $.ui.invalidate('command.describe')
     $.ui.invalidate('config.describe')
   }

@@ -54,6 +54,7 @@ export const MESSAGES = {
     `기본 항목의 번역을 ${path}에 저장했습니다. 번역문이 없는 기본 항목은 ${missing}개입니다.`,
   exportFailed: (reason: string, path: string) => `내보내기 파일을 저장하지 못했습니다. 원인: ${reason}. 저장하려던 경로: ${path}`,
   notice: (count: number) => `번역되지 않은 문구가 ${count}개 있습니다. /korean-ui-translate를 실행하면 번역합니다.`,
+  progress: (done: number, total: number) => `번역 중 ${done}/${total}`,
   failedHeader: '실패한 문구:',
   reasons: {
     missing: '응답에 번역문이 없음',

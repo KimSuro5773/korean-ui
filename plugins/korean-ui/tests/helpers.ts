@@ -24,10 +24,12 @@ export const PLUGIN_JSON = JSON.stringify({ name: 'korean-ui', version: VERSION 
 
 type Provider = { plugin: string; tier: string }
 
-// 가짜 응답이 받은 값을 모아 두는 곳입니다. 테스트에서 저장, 알림, 파일 쓰기, Haiku 요청 내용을 확인할 때 씁니다.
+// 가짜 응답이 받은 값을 모아 두는 곳입니다. 테스트에서 저장, 알림, 상태 줄, 파일 쓰기, Haiku 요청 내용을 확인할 때 씁니다.
 export type World = {
   saved: Map<string, unknown>
   toasts: string[]
+  // $.ui.status로 표시한 문구입니다. 표시를 지우면 undefined가 들어갑니다.
+  statuses: (string | undefined)[]
   logs: string[]
   written: { path: string; text: string }[]
   prompts: string[]
@@ -68,6 +70,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   const world: World = {
     saved: new Map(Object.entries(options.store ?? {})),
     toasts: [],
+    statuses: [],
     logs: [],
     written: [],
     prompts: [],
@@ -112,6 +115,10 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   })
   on('ui.toast', ($, e) => {
     world.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.status', ($, e) => {
+    world.statuses.push(e.text)
     return { value: undefined }
   })
   on('ui.log', ($, e) => {
