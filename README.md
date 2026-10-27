@@ -1,4 +1,4 @@
-# korean-ui
+# korean-ui - Claude Code 한국어 번역 플러그인
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
