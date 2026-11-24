@@ -147,7 +147,7 @@ Claude Code에서 다음 두 줄을 입력합니다.
 
 | 환경 | 번역 표시 |
 |---|---|
-| 터미널의 Claude Code | 확인함 (Windows 터미널, Claude Code 2.1.292) |
+| 터미널의 Claude Code | 확인함 (Windows 터미널, Claude Code 2.1.331) |
 | Desktop 앱의 Code 탭 | 확인하지 않음 |
 | VS Code 확장 | 확인하지 않음 |
 
