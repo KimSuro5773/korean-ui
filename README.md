@@ -2,7 +2,7 @@
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
-![version](https://img.shields.io/badge/version-0.2.0-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.2.1-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
   <img src="assets/menu-before.png" width="720" alt="번역 전: 명령어 설명이 영어로 표시된 / 메뉴"><br>
@@ -39,7 +39,7 @@ Claude Code 기본 명령어의 설명이 한국어로 표시됩니다.
 
 ```
 /help      도움말과 사용 가능한 명령어를 표시합니다
-/clear     빈 컨텍스트로 새 세션을 시작합니다. 이전 세션은 디스크에 유지됩니다(/resume으로 이어서 진행할 수 있습니다)
+/clear     빈 컨텍스트로 새 세션을 시작합니다. 루프는 그대로 이어지고, 이전 세션은 /resume에 남습니다
 /compact   지금까지의 대화를 요약하여 컨텍스트를 확보합니다
 /config    설정을 엽니다
 ```
