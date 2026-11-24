@@ -1,5 +1,6 @@
 // 번역 사전을 읽고, 찾고, 합치는 함수들입니다.
 // Claude Code API($)를 쓰지 않으므로 Claude Code 없이 테스트할 수 있습니다.
+import { matchPattern, patternSection, type PatternTable } from './patterns'
 
 // 번역할 문구의 종류입니다. commands는 명령어 설명, config는 /config 항목입니다.
 export type Kind = 'commands' | 'config'
@@ -12,8 +13,9 @@ export type Category = 'builtin' | 'others' | 'self'
 export type Dictionary = Record<Kind, Record<string, string>>
 
 // 번역문을 찾는 세 계층입니다. overrides는 요청으로 고친 번역, bundled는 기본 번역표, user는 자동 번역입니다.
-// 번역문은 이 순서로 찾습니다.
-export type Layers = { overrides: Dictionary; bundled: Dictionary; user: Dictionary }
+// patterns는 기본 번역표의 패턴으로, 기본 번역표에 같은 문구가 없을 때 씁니다. 없으면 패턴을 쓰지 않습니다.
+// 번역문은 고친 번역, 기본 번역표(같은 문구, 패턴 순), 자동 번역 순서로 찾습니다.
+export type Layers = { overrides: Dictionary; bundled: Dictionary; user: Dictionary; patterns?: PatternTable }
 
 // /config에서 켜고 끄는 세 항목의 값입니다.
 export type Settings = {
@@ -102,6 +104,11 @@ export const MESSAGES = {
   resetOverridesKept: (reason: string) => `고친 번역은 지우지 못해서 그대로 남아 있습니다. 원인: ${reason}.`,
   resetFailuresKept: (reason: string) => `3번 실패한 문구의 기록은 지우지 못해서 다음에도 건너뜁니다. 원인: ${reason}.`,
   resetRetranslateHint: '다시 번역하려면 /korean-ui-translate를 실행하세요.',
+  // /config의 번역 설정 이름입니다. 지운 제공자의 번역이 꺼져 있을 때 어느 설정을 켜야 하는지 알려 줄 때 씁니다.
+  categoryNames: { builtin: '기본 항목 번역', others: '다른 플러그인과 스킬 번역' },
+  resetOffHint: (setting: string) => `다시 번역하려면 /config에서 '${setting}'을 켠 뒤 /korean-ui-translate를 실행하세요.`,
+  retranslateOff: (setting: string) =>
+    `'${setting}'이 꺼져 있어서 다시 번역하지 않았습니다. /config에서 켠 뒤 /korean-ui-translate를 실행하세요.`,
   resetCanceled: '취소했습니다. 번역은 그대로 남아 있습니다.',
   statusDescription: '번역 현황을 제공자별로 표시합니다',
   // Claude Code가 명령어의 출력 앞에 플러그인 이름을 붙여 주므로, 첫 줄에는 이름을 다시 쓰지 않고 버전만 씁니다.
@@ -155,10 +162,16 @@ export function parseDictionary(raw: unknown): Dictionary {
 }
 
 // 항목을 Claude Code, 다른 플러그인, 이 플러그인 중 누가 제공했는지 판별합니다.
-export function categoryOf(providerPlugin: string, selfName: string): Category {
-  if (providerPlugin === 'engine') return 'builtin'
+// Claude Code 실행 파일에 들어 있는 플러그인(tier가 builtin)도 Claude Code가 제공한 것으로 봅니다.
+export function categoryOf(providerPlugin: string, selfName: string, providerTier?: string): Category {
+  if (isClaudeCode(providerPlugin, providerTier)) return 'builtin'
   if (pluginBase(providerPlugin) === pluginBase(selfName)) return 'self'
   return 'others'
+}
+
+// 제공자가 Claude Code 자신이거나 Claude Code 실행 파일에 들어 있는 플러그인인지 확인합니다.
+function isClaudeCode(providerPlugin: string, providerTier: string | undefined): boolean {
+  return providerPlugin === 'engine' || providerTier === 'builtin'
 }
 
 // 'korean-ui@korean-ui'처럼 플러그인 이름 뒤에 붙은 '@마켓플레이스'를 뗍니다.
@@ -170,9 +183,10 @@ function pluginBase(name: string): string {
 // Claude Code 기본 항목의 제공자를 사용자에게 보여 줄 때 쓰는 이름입니다.
 export const BUILTIN_PROVIDER = 'claude-code'
 
-// 제공자를 사용자에게 보여 줄 이름으로 바꿉니다. Claude Code는 'claude-code', 다른 플러그인은 '@마켓플레이스'를 뗀 이름입니다.
-export function providerLabel(providerPlugin: string): string {
-  return providerPlugin === 'engine' ? BUILTIN_PROVIDER : pluginBase(providerPlugin)
+// 제공자를 사용자에게 보여 줄 이름으로 바꿉니다. Claude Code와 그 실행 파일에 들어 있는 플러그인은 'claude-code',
+// 다른 플러그인은 '@마켓플레이스'를 뗀 이름입니다.
+export function providerLabel(providerPlugin: string, providerTier?: string): string {
+  return isClaudeCode(providerPlugin, providerTier) ? BUILTIN_PROVIDER : pluginBase(providerPlugin)
 }
 
 const CURRENTLY = /^(.*\S) \(currently (.+)\)$/
@@ -204,12 +218,18 @@ export function needsTranslation(source: string): boolean {
   return source.trim() !== '' && !HANGUL.test(source) && !/[\r\n]/.test(source)
 }
 
-// 영어 원문의 번역문을 찾습니다. 고친 번역을 먼저 찾고, 없으면 기본 번역표, 그다음 자동 번역을 찾습니다.
+// 영어 원문의 번역문을 찾습니다. 고친 번역을 먼저 찾고, 없으면 기본 번역표(같은 문구, 패턴 순), 그다음 자동 번역을 찾습니다.
 export function lookup(layers: Layers, kind: Kind, source: string): string | undefined {
-  for (const dictionary of [layers.overrides, layers.bundled, layers.user]) {
-    if (Object.hasOwn(dictionary[kind], source)) return dictionary[kind][source]
-  }
-  return undefined
+  if (Object.hasOwn(layers.overrides[kind], source)) return layers.overrides[kind][source]
+  const bundled = bundledOf(layers, kind, source)
+  if (bundled !== undefined) return bundled
+  return Object.hasOwn(layers.user[kind], source) ? layers.user[kind][source] : undefined
+}
+
+// 기본 번역표에서 원문의 번역문을 찾습니다. 같은 문구의 번역을 먼저 찾고, 없으면 패턴으로 만든 번역문을 돌려줍니다.
+export function bundledOf(layers: Layers, kind: Kind, source: string): string | undefined {
+  if (Object.hasOwn(layers.bundled[kind], source)) return layers.bundled[kind][source]
+  return layers.patterns === undefined ? undefined : matchPattern(layers.patterns[kind], source)
 }
 
 // 화면에 표시된 원문을 기록합니다. Claude Code도 같은 원문을 쓰면 Claude Code 항목으로 남겨서 내보내기에서 빠지지 않게 합니다.
@@ -265,6 +285,7 @@ export function withTranslations(dictionary: Dictionary, kind: Kind, additions: 
 // 기존 기본 번역표에, 화면에서 확인한 Claude Code 기본 항목의 새 번역문을 더해 기본 번역표(ko.json)와 같은 형식의 JSON으로 만듭니다.
 // /diff처럼 상황에 따라서만 나타나는 항목의 번역이 빠지지 않도록, 기존 기본 번역표의 항목은 모두 남깁니다.
 // 기본 항목에 고친 번역이 있으면 그 번역을 넣어서, 요청으로 고친 번역을 기본 번역표에 반영할 수 있게 합니다.
+// 기본 번역표의 패턴은 patterns 섹션에 그대로 넣고, 고친 번역이 없이 패턴으로 번역되는 원문은 항목으로 추가하지 않습니다.
 export function buildExport(seen: Seen, layers: Layers): ExportResult {
   const out = emptyDictionary()
   let missing = 0
@@ -274,13 +295,18 @@ export function buildExport(seen: Seen, layers: Layers): ExportResult {
     for (const [source, entry] of seen[kind]) {
       if (entry.category !== 'builtin') continue
       builtinCount += 1
+      const isFixed = Object.hasOwn(layers.overrides[kind], source) || Object.hasOwn(layers.bundled[kind], source)
+      if (!isFixed && layers.patterns !== undefined && matchPattern(layers.patterns[kind], source) !== undefined) continue
       const translated = lookup(layers, kind, source)
       if (translated === undefined) missing += 1
       else merged[source] = translated
     }
     for (const source of Object.keys(merged).sort()) out[kind][source] = merged[source] ?? ''
   }
-  return { json: `${JSON.stringify(out, null, 2)}\n`, missing, builtinCount }
+  const patterns = layers.patterns
+  const hasPatterns = patterns !== undefined && KINDS.some((kind) => patterns[kind].length > 0)
+  const file = hasPatterns ? { ...out, patterns: patternSection(patterns) } : out
+  return { json: `${JSON.stringify(file, null, 2)}\n`, missing, builtinCount }
 }
 
 // 이미 알린 문구를 기록할 때 쓰는 키를 만듭니다. 명령어 설명과 /config 항목을 구분하려고 종류를 앞에 붙입니다.
@@ -586,7 +612,7 @@ export function buildReverse(layers: Layers, retired: ReadonlyMap<string, string
 
 // 명령어 이름마다, 그 명령어의 번역문으로만 영어 원문을 찾는 표를 만듭니다.
 // described는 command.describe에서 받은 명령어 이름과 영어 설명입니다. 다른 명령어와 번역문이 같아도 자기 원문을 찾게 합니다.
-// 그 명령어의 원문에 대한 지운 번역문(retired)도 넣습니다.
+// 기본 번역표의 패턴으로 만든 번역문과, 그 명령어의 원문에 대한 지운 번역문(retired)도 넣습니다.
 export function buildNamedReverse(
   described: ReadonlyMap<string, string>,
   layers: Layers,
@@ -599,9 +625,13 @@ export function buildNamedReverse(
     for (const [translated, retiredSource] of retired) {
       if (retiredSource === base) reverse.set(translated, base)
     }
-    for (const dictionary of [layers.user, layers.bundled, layers.overrides]) {
-      const translated = dictionary.commands[base]
-      if (Object.hasOwn(dictionary.commands, base) && translated !== undefined) reverse.set(translated, base)
+    const translations = [
+      Object.hasOwn(layers.user.commands, base) ? layers.user.commands[base] : undefined,
+      bundledOf(layers, 'commands', base),
+      Object.hasOwn(layers.overrides.commands, base) ? layers.overrides.commands[base] : undefined,
+    ]
+    for (const translated of translations) {
+      if (translated !== undefined) reverse.set(translated, base)
     }
     named.set(name, reverse)
   }
@@ -654,35 +684,83 @@ function originalWithSuffix(shown: string, reverse: ReadonlyMap<string, string>)
   return `${reverse.get(matched) ?? ''}${shown.slice(matched.length)}`
 }
 
-// 스킬 목록을 되돌린 결과입니다. restored는 되돌린 줄 수이고, 그중 byName은 명령어 이름으로 원문을 찾은 줄 수입니다.
-// leftover는 되돌리지 못하고 남은 번역문 수입니다.
-export type ListingRestore = { text: string; restored: number; byName: number; leftover: number }
+// 스킬 목록을 되돌린 결과입니다. restored는 번역 사전으로 되돌린 줄 수이고, 그중 byName은 명령어 이름별 표로 원문을 찾은 줄 수입니다.
+// byFallback은 번역 사전에 없는 번역문을 명령어의 영어 설명으로 바꾼 줄 수입니다.
+// leftover는 되돌리지 못하고 남은 번역문 수이고, unresolved는 한글이 남았는데 영어 설명의 기록이 없어서 바꾸지 못한 줄의 명령어 이름입니다.
+// $.command.list()는 command.describe를 발생시키지 않으므로(2.1.331에서 확인), 기록이 없는 줄은 디버그 로그에만 남깁니다.
+export type ListingRestore = {
+  text: string
+  restored: number
+  byName: number
+  byFallback: number
+  leftover: number
+  unresolved: string[]
+}
 
-const LISTING_LINE = /^- (\S+): (.*)$/
+// 스킬 목록의 한 줄입니다. 이름 뒤에 표시 이름이 괄호로 붙기도 합니다(예: '- ship-local (ship): …').
+// 그때 command.describe가 받는 명령어 이름은 괄호 안의 표시 이름입니다.
+const LISTING_LINE = /^- (\S+(?: \(([^\s()]+)\))?): (.*)$/
 
 // Claude에게 보내는 스킬 목록에서 화면용 번역문을 영어 원문으로 되돌립니다.
 // 줄의 명령어 이름으로 그 명령어의 원문을 먼저 찾고, 찾지 못하면 사전 전체에서 찾습니다.
+// 그래도 한글이 남은 줄은 described(명령어 이름별 영어 설명)로 바꿉니다. 이전 버전이나 지운 번역문이 남은 목록을 위해서입니다.
 // 되돌린 뒤에도 번역문이 남아 있으면 목록 형식이 바뀐 것이므로, 남은 개수를 함께 알려 줍니다.
 export function restoreListing(
   text: string,
   reverse: ReadonlyMap<string, string>,
   named: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  described: ReadonlyMap<string, string> = new Map(),
 ): ListingRestore {
   let restored = 0
   let byName = 0
+  let byFallback = 0
+  const unresolved: string[] = []
   const lines = text.split('\n').map((line) => {
     const match = LISTING_LINE.exec(line)
     if (match === null) return line
-    const shown = match[2] ?? ''
-    const own = named.get(match[1] ?? '')
+    const label = match[1] ?? ''
+    const name = match[2] ?? label
+    const shown = match[3] ?? ''
+    // 이 플러그인이 표시한 번역문은 모두 한글이 들어 있으므로, 한글이 없는 줄은 바꾸지 않습니다.
+    // 한글이 없는 번역문이 저장되어 있어도 다른 명령어의 영어 설명을 바꾸지 않기 위해서입니다.
+    if (!HANGUL.test(shown)) return line
+    // 기록된 원래 설명에 한글이 있으면 이 플러그인이 번역하지 않은 설명이므로, 번역문과 글자가 같아도 그대로 둡니다.
+    // (currently …) 부분은 번역하지 않으므로 떼어 내고 판단합니다.
+    const recorded = described.get(name)
+    if (recorded !== undefined && HANGUL.test(splitState(recorded).base)) return line
+    const own = named.get(name)
     const fromOwn = own === undefined ? undefined : originalOf(shown, own)
     const original = fromOwn ?? originalOf(shown, reverse)
-    if (original === undefined) return line
-    restored += 1
-    if (fromOwn !== undefined) byName += 1
-    return `- ${match[1] ?? ''}: ${original}`
+    if (original !== undefined) {
+      restored += 1
+      if (fromOwn !== undefined) byName += 1
+      return `- ${label}: ${original}`
+    }
+    const english = described.get(name)
+    if (english === undefined) {
+      unresolved.push(name)
+      return line
+    }
+    const replaced = originalByName(shown, english)
+    if (replaced === undefined) return line
+    byFallback += 1
+    return `- ${label}: ${replaced}`
   })
   const result = lines.join('\n')
   const leftover = [...reverse.keys()].filter((translated) => result.includes(translated)).length
-  return { text: result, restored, byName, leftover }
+  return { text: result, restored, byName, byFallback, leftover, unresolved }
+}
+
+// 스킬 목록 줄의 설명 부분에 남은 번역문을 그 명령어의 영어 설명으로 바꾼 문구를 돌려줍니다.
+// 설명에 한글이 없거나, 영어 설명에 한글이 있으면(원래 한글로 쓴 설명) 바꾸지 않고 undefined를 돌려줍니다.
+// 영어 설명의 (currently …) 부분은 번역하지 않으므로 떼어 내고 판단합니다.
+// 설명 부분이 이미 영어 설명이면 한글은 when_to_use에 있는 것이므로 역시 바꾸지 않습니다.
+// 마지막 한글 글자 뒤에 처음 나오는 ' - '부터는 when_to_use로 보고 그대로 남깁니다.
+export function originalByName(shown: string, english: string): string | undefined {
+  if (!HANGUL.test(shown) || HANGUL.test(splitState(english).base)) return undefined
+  if (shown === english || shown.startsWith(`${english}${WHEN_TO_USE_SEPARATOR}`)) return undefined
+  const hangul = [...shown.matchAll(/\p{Script=Hangul}/gu)]
+  const lastHangul = hangul[hangul.length - 1]?.index ?? 0
+  const separator = shown.indexOf(WHEN_TO_USE_SEPARATOR, lastHangul)
+  return separator === -1 ? english : `${english}${shown.slice(separator)}`
 }

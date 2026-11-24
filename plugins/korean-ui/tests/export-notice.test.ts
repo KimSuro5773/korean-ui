@@ -1,5 +1,5 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES } from '../hooks/lib/translation.ts'
+import { MESSAGES } from '../hooks/lib/translation'
 import {
   BUILTIN,
   CLEAR_EN,
@@ -13,14 +13,15 @@ import {
   VERSION,
   describeCommand,
   describeConfig,
+  runCommand,
   setupWorld,
   startSession,
   type World,
-} from './helpers.ts'
+} from './helpers'
 
 // /korean-ui-translate export를 실행합니다.
 function runExport($: Engine) {
-  return $.command.run({ command: 'korean-ui-translate', args: 'export' })
+  return runCommand($, 'korean-ui-translate', 'export')
 }
 
 test('내보내기는 기존 기본 번역표와 확인한 기본 항목의 번역을 정렬해서 저장합니다', async ($, on) => {

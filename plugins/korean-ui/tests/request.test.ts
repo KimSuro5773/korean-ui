@@ -1,6 +1,6 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { SELECTION_GUIDE, confirmQuestion, requestResultText } from '../hooks/lib/request.ts'
-import { MESSAGES, failedListText } from '../hooks/lib/translation.ts'
+import { SELECTION_GUIDE, confirmQuestion, requestResultText } from '../hooks/lib/request'
+import { MESSAGES, failedListText } from '../hooks/lib/translation'
 import {
   BUILTIN,
   CLEAR_EN,
@@ -16,14 +16,15 @@ import {
   apiError,
   describeCommand,
   rawAnswer,
+  runCommand,
   sendListing,
   setupWorld,
   type World,
-} from './helpers.ts'
+} from './helpers'
 
 // /korean-ui-translate를 요청 문장과 함께 실행합니다.
 function request($: Engine, args: string) {
-  return $.command.run({ command: 'korean-ui-translate', args })
+  return runCommand($, 'korean-ui-translate', args)
 }
 
 // 기본 번역표에 있는 /help와 번역문이 없는 /clear를 화면에서 확인한 상태로 만듭니다.

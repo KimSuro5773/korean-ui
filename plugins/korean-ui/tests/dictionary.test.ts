@@ -31,7 +31,7 @@ import {
   withOthersHint,
   withState,
   withTranslations,
-} from '../hooks/lib/translation.ts'
+} from '../hooks/lib/translation'
 
 const DEFAULTS = { translateBuiltin: true, translateOthers: false, notifyUntranslated: true }
 const ON_ALL = { translateBuiltin: true, translateOthers: true, notifyUntranslated: true }
@@ -58,6 +58,8 @@ test('categoryOf는 제공자로 범주를 정하고 @ 뒤의 마켓플레이스
   expect(categoryOf('korean-ui@korean-ui', 'korean-ui')).toBe('self')
   expect(categoryOf('korean-ui@inline', 'korean-ui@inline')).toBe('self')
   expect(categoryOf('other-plugin@market', 'korean-ui')).toBe('others')
+  expect(categoryOf('cc-plugin-easel@builtin', 'korean-ui', 'builtin')).toBe('builtin')
+  expect(categoryOf('other-plugin@market', 'korean-ui', 'user')).toBe('others')
 })
 
 test('splitState는 설명 끝의 (currently …)만 떼어 냅니다', () => {
@@ -124,6 +126,7 @@ test('providerLabel은 기본 항목을 claude-code로, 다른 플러그인을 �
   expect(providerLabel('engine')).toBe('claude-code')
   expect(providerLabel('other-plugin@market')).toBe('other-plugin')
   expect(providerLabel('local-plugin')).toBe('local-plugin')
+  expect(providerLabel('cc-plugin-easel@builtin', 'builtin')).toBe('claude-code')
 })
 
 test('untranslated는 번역하도록 켜 둔 항목 중에서 번역문이 없는 원문만 정렬해서 돌려줍니다', () => {

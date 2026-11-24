@@ -1,7 +1,8 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES } from '../hooks/lib/translation.ts'
+import { MESSAGES } from '../hooks/lib/translation'
 import {
   BUILTIN,
+  BUILTIN_MOD,
   BUNDLED,
   CLEAR_EN,
   GUIDE,
@@ -13,12 +14,13 @@ import {
   VERSION,
   describeCommand,
   describeConfig,
+  runCommand,
   setupWorld,
-} from './helpers.ts'
+} from './helpers'
 
 // /korean-ui-status 명령어를 실행합니다.
 function status($: Engine) {
-  return $.command.run({ command: 'korean-ui-status', args: '' })
+  return runCommand($, 'korean-ui-status', '')
 }
 
 const HEADER = ['| 제공자 | 문구 | 기본 번역표 | 자동 번역 | 고친 번역 | 미번역 | 건너뜀 |', '|---|---|---|---|---|---|---|']
@@ -51,6 +53,14 @@ test('제공자별 번역 현황과 설정을 표시하고 Haiku를 호출하지
     ].join('\n'),
   )
   expect(world.prompts).toEqual([])
+})
+
+test('내장 플러그인의 문구는 claude-code 줄에 셉니다', async ($, on) => {
+  setupWorld(on)
+  await describeConfig($, 'Theme', BUILTIN_MOD, 'autoCharts')
+  const text = (await status($)).text
+  expect(text).toContain('| claude-code | 1 | 1 | 0 | 0 | 0 | 0 |')
+  expect(text).not.toContain('cc-plugin-easel')
 })
 
 test('여러 제공자가 쓰는 원문은 각 제공자의 행에 모두 세고, 확인하지 못한 저장 번역이 없으면 그 줄을 생략합니다', async ($, on) => {

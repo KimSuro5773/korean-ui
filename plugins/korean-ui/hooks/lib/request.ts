@@ -10,7 +10,7 @@ import {
   type Layers,
   type Seen,
   type Settings,
-} from './translation.ts'
+} from './translation'
 
 // 요청의 대상이 될 수 있는 원문 하나입니다. current는 지금 표시 중인 번역문이고, 번역문이 없으면 넣지 않습니다.
 export type Candidate = {

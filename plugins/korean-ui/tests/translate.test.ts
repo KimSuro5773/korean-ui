@@ -1,5 +1,5 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES, failedListText, skippedText } from '../hooks/lib/translation.ts'
+import { MESSAGES, failedListText, skippedText } from '../hooks/lib/translation'
 import {
   BUILTIN,
   BUNDLED,
@@ -16,14 +16,15 @@ import {
   describeCommand,
   describeConfig,
   rawAnswer,
+  runCommand,
   setupWorld,
   startSession,
   type World,
-} from './helpers.ts'
+} from './helpers'
 
 // /korean-ui-translate 명령어를 실행합니다.
 function run($: Engine, args = '') {
-  return $.command.run({ command: 'korean-ui-translate', args })
+  return runCommand($, 'korean-ui-translate', args)
 }
 
 const CLEAR_KEY = `commands:${CLEAR_EN}`

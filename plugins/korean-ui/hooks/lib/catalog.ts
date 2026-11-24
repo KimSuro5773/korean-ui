@@ -4,6 +4,8 @@ import {
   BUILTIN_PROVIDER,
   KINDS,
   MESSAGES,
+  bundledOf,
+  isEnabled,
   isSkipped,
   noticeKey,
   type Dictionary,
@@ -12,7 +14,7 @@ import {
   type Layers,
   type Seen,
   type Settings,
-} from './translation.ts'
+} from './translation'
 
 // 종류별 원문 목록입니다. 제공자 하나가 쓰는 원문을 가리킬 때 씁니다.
 export type SourceSet = Readonly<Record<Kind, readonly string[]>>
@@ -47,6 +49,20 @@ export function sourcesOf(seen: Seen, provider: string): Record<Kind, string[]> 
     result[kind].sort()
   }
   return result
+}
+
+// 제공자가 쓰는 원문이 모두 /config에서 번역을 꺼 둔 쪽(Claude Code 항목 또는 다른 플러그인 항목)이면 그쪽을 돌려줍니다.
+// 번역이 켜진 원문이 하나라도 있거나, 그 제공자의 원문이 없으면 undefined를 돌려줍니다.
+export function disabledCategoryOf(seen: Seen, provider: string, settings: Settings): 'builtin' | 'others' | undefined {
+  let disabled: 'builtin' | 'others' | undefined
+  for (const kind of KINDS) {
+    for (const entry of seen[kind].values()) {
+      if (!entry.providers.has(provider) || entry.category === 'self') continue
+      if (isEnabled(entry.category, settings)) return undefined
+      disabled ??= entry.category
+    }
+  }
+  return disabled
 }
 
 // 종류별 원문 목록에서 only에 들어 있는 원문만 남깁니다.
@@ -99,7 +115,7 @@ export type SourceState = 'override' | 'bundled' | 'auto' | 'skipped' | 'untrans
 // 원문 하나의 번역 상태를 번역문을 찾는 순서대로 판정합니다.
 export function stateOf(layers: Layers, failures: Failures | undefined, kind: Kind, source: string): SourceState {
   if (Object.hasOwn(layers.overrides[kind], source)) return 'override'
-  if (Object.hasOwn(layers.bundled[kind], source)) return 'bundled'
+  if (bundledOf(layers, kind, source) !== undefined) return 'bundled'
   if (Object.hasOwn(layers.user[kind], source)) return 'auto'
   return isSkipped(failures, kind, source) ? 'skipped' : 'untranslated'
 }

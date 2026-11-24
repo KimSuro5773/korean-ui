@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   BUILTIN,
+  BUILTIN_MOD,
   CLEAR_EN,
   HELP_EN,
   HELP_KO,
@@ -15,7 +16,7 @@ import {
   sendListing,
   setupWorld,
   startSession,
-} from './helpers.ts'
+} from './helpers'
 
 const OTHER_DICTIONARY = { dictionary: { commands: { [OTHER_EN]: OTHER_KO }, config: {} } }
 
@@ -79,6 +80,11 @@ test('기본 번역표를 읽지 못해도 사용자 번역 사전은 사용합�
 test('/config 기본 항목의 이름을 번역합니다', async ($, on) => {
   setupWorld(on)
   expect((await describeConfig($, 'Theme')).label).toBe('테마')
+})
+
+test('내장 플러그인의 /config 항목은 다른 플러그인 번역이 꺼져 있어도 기본 번역표로 번역합니다', async ($, on) => {
+  setupWorld(on)
+  expect((await describeConfig($, 'Theme', BUILTIN_MOD, 'autoCharts')).label).toBe('테마')
 })
 
 test('다른 플러그인의 /config 항목은 이름과 도움말을 함께 번역합니다', { options: { translate_others: true } }, async ($, on) => {

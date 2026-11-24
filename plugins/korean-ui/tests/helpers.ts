@@ -1,12 +1,14 @@
 // 여러 테스트 파일이 함께 쓰는 가짜 응답(stub)과 시험용 문구입니다.
 // 공식 테스트 도구의 규칙에 따라, 각 테스트에서 첫 $ 호출보다 먼저 setupWorld를 부릅니다.
-import type { On } from 'claude-code'
+import type { On, OpEventResult, Origin } from 'claude-code'
 import { mock, type Engine } from 'claude-code/testing'
 
 export const BUILTIN = { plugin: 'engine', tier: 'core' } as const
 // 0단계에서 다른 플러그인의 제공자 이름이 '이름@마켓플레이스' 형식인 것을 확인했습니다.
 export const OTHER = { plugin: 'other-plugin@market', tier: 'user' } as const
 export const SELF = { plugin: 'korean-ui@korean-ui', tier: 'user' } as const
+// Claude Code 실행 파일에 들어 있는 플러그인입니다. 2.1.331에서 이름이 'cc-plugin-<이름>@builtin' 형식인 것을 확인했습니다.
+export const BUILTIN_MOD = { plugin: 'cc-plugin-easel@builtin', tier: 'builtin' } as const
 export const USAGE = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 export const HELP_EN = 'Show help and available commands'
@@ -22,7 +24,7 @@ export const GUIDE = '# 시험용 번역 지침'
 export const VERSION = '0.1.1'
 export const PLUGIN_JSON = JSON.stringify({ name: 'korean-ui', version: VERSION })
 
-type Provider = { plugin: string; tier: string }
+type Provider = Origin
 
 // 가짜 응답이 받은 값을 모아 두는 곳입니다. 테스트에서 저장, 알림, 상태 줄, 파일 쓰기, Haiku 요청 내용을 확인할 때 씁니다.
 export type World = {
@@ -130,7 +132,7 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
   })
   on('command.register', ($, e) => {
     world.registered.push(e)
-    return { value: undefined }
+    return { value: { command: e.name } }
   })
   on('command.list', () => ({ value: [] }))
   on('config.list', () => ({ value: [] }))
@@ -140,12 +142,13 @@ export function setupWorld(on: On, options: WorldOptions = {}): World {
     world.prompts.push(String(e.prompt))
     world.systems.push(String(e.system ?? ''))
     const next = replies.shift()
-    if (typeof next === 'function') return (next as () => unknown)()
-    return next ?? answer({})
+    if (typeof next === 'function') return (next as () => unknown)() as OpEventResult<'model.complete'>
+    return (next ?? answer({})) as OpEventResult<'model.complete'>
   })
   on('command.describe', ($, e) => ({ description: e.description, argumentHint: e.argumentHint, isHidden: e.isHidden }))
   on('config.describe', ($, e) => ({ label: e.label, description: e.description, isHidden: e.isHidden }))
   on('prompt.attachment', ($, e) => ({ text: e.text }))
+  on('skill.prompt', ($, e) => ({ text: e.text }))
   return world
 }
 
@@ -172,6 +175,11 @@ export function describeCommand($: Engine, description: string, provider: Provid
 // Claude Code가 /config에 항목을 표시하기 직전의 이벤트를 발생시킵니다.
 export function describeConfig($: Engine, label: string, provider: Provider = BUILTIN, key = 'theme', description?: string) {
   return $.config.describe({ key, label, isHidden: false, provider, ...(description === undefined ? {} : { description }) })
+}
+
+// 사용자가 입력창에서 명령어를 실행한 것처럼 command.run 이벤트를 발생시킵니다.
+export function runCommand($: Engine, command: string, args = '') {
+  return $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
 }
 
 // 세션이 시작될 때의 이벤트를 발생시킵니다. isInteractive가 false이면 -p 실행처럼 화면 없이 시작합니다.

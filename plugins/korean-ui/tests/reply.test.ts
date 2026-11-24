@@ -12,7 +12,7 @@ import {
   retireRemoved,
   validateReply,
   type Dictionary,
-} from '../hooks/lib/translation.ts'
+} from '../hooks/lib/translation'
 
 // 고친 번역이 없는 세 계층을 만듭니다.
 const layers = (bundled: Dictionary, user: Dictionary) => ({ overrides: { commands: {}, config: {} }, bundled, user })
@@ -187,13 +187,15 @@ test('restoreListing은 번역문이 들어간 줄만 영어 원문으로 되돌
     text: [HEADER, '', '- kui:skill: Use when the user asks', '- other: Other skill', '- mine: 직접 만든 한국어 스킬입니다'].join('\n'),
     restored: 1,
     byName: 0,
+    byFallback: 0,
     leftover: 0,
+    unresolved: ['mine'],
   })
 })
 
 test('restoreListing은 형식이 달라 되돌리지 못한 번역문의 개수를 셉니다', () => {
   const text = '* kui:skill — 사용자가 요청할 때 사용합니다'
-  expect(restoreListing(text, REVERSE, new Map())).toEqual({ text, restored: 0, byName: 0, leftover: 1 })
+  expect(restoreListing(text, REVERSE, new Map())).toEqual({ text, restored: 0, byName: 0, byFallback: 0, leftover: 1, unresolved: [] })
 })
 
 test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 명령어 이름으로 원문을 고릅니다', () => {
@@ -208,7 +210,9 @@ test('restoreListing은 같은 번역문이 여러 원문에 있으면 줄의 �
     text: '- unit: Run tests\n- suite: Run the test suite',
     restored: 2,
     byName: 2,
+    byFallback: 0,
     leftover: 0,
+    unresolved: [],
   })
 })
 
@@ -236,7 +240,9 @@ test('restoreListing은 명령어 이름으로 찾은 줄과 사전 전체에서
     text: '- kui:skill: Use when the user asks\n- model: Set the AI model for Claude Code',
     restored: 2,
     byName: 1,
+    byFallback: 0,
     leftover: 0,
+    unresolved: [],
   })
 })
 

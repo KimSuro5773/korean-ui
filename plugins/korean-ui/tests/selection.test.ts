@@ -9,8 +9,8 @@ import {
   requestResultText,
   selectionChunks,
   type Candidate,
-} from '../hooks/lib/request.ts'
-import { emptySeen, recordSeen } from '../hooks/lib/translation.ts'
+} from '../hooks/lib/request'
+import { emptySeen, recordSeen } from '../hooks/lib/translation'
 
 const EMPTY = { commands: {}, config: {} }
 const ON_ALL = { translateBuiltin: true, translateOthers: true, notifyUntranslated: true }

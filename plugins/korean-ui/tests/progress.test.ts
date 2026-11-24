@@ -1,9 +1,9 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { BUILTIN, answer, apiError, describeCommand, setupWorld } from './helpers.ts'
+import { BUILTIN, answer, apiError, describeCommand, runCommand, setupWorld } from './helpers'
 
 // /korean-ui-translate 명령어를 실행합니다.
 function run($: Engine) {
-  return $.command.run({ command: 'korean-ui-translate', args: '' })
+  return runCommand($, 'korean-ui-translate', '')
 }
 
 const SOURCES = Array.from({ length: 51 }, (_, i) => `Command ${String(i + 1).padStart(2, '0')}`)

@@ -1,8 +1,9 @@
-import type { EngineInterface, ModelCompleteResult, Register } from 'claude-code'
+import type { EngineInterface, ModelCompleteResult, Origin, Register } from 'claude-code'
 import {
   type SourceSet,
   countSkipped,
   countStored,
+  disabledCategoryOf,
   hasFailures,
   matchProvider,
   providerRows,
@@ -13,7 +14,8 @@ import {
   unseenStored,
   withoutFailures,
   withoutSources,
-} from './lib/catalog.ts'
+} from './lib/catalog'
+import { type PatternTable, emptyPatterns, parsePatterns } from './lib/patterns'
 import {
   type Candidate,
   type Change,
@@ -25,7 +27,7 @@ import {
   parseSelection,
   requestResultText,
   selectionChunks,
-} from './lib/request.ts'
+} from './lib/request'
 import {
   type Counts,
   type Dictionary,
@@ -33,6 +35,7 @@ import {
   type Failures,
   type Kind,
   type Layers,
+  type ListingRestore,
   type PromptItem,
   type Retired,
   type Seen,
@@ -79,7 +82,7 @@ import {
   withOthersHint,
   withState,
   withTranslations,
-} from './lib/translation.ts'
+} from './lib/translation'
 
 const STORE_DICTIONARY = 'dictionary'
 const STORE_OVERRIDES = 'overrides'
@@ -91,8 +94,10 @@ const NOTICE_DELAY_MS = 1500
 // 처음 필요할 때 한 번 읽어 두는 값입니다. overrides는 요청으로 고친 번역, user는 자동 번역, notified는 이미 알린 문구의 목록입니다.
 // overrides, user, notified는 다른 세션이 바꿀 수 있으므로, 번역하거나 알림을 띄우기 직전에 저장소에서 다시 읽습니다.
 // retired는 overrides와 user에서 빠진 이전 번역문으로, 스킬 목록을 되돌릴 때만 씁니다.
+// patterns는 기본 번역표의 patterns 섹션입니다.
 type Loaded = {
   bundled: Dictionary
+  patterns: PatternTable
   overrides: Dictionary
   user: Dictionary
   notified: Set<string>
@@ -110,6 +115,8 @@ type State = {
   interactive: boolean | undefined
   // command.describe에서 받은 명령어 이름과 영어 설명입니다. 스킬 목록을 되돌릴 때 줄마다 자기 원문을 찾는 데 씁니다.
   described: Map<string, string>
+  // 번역 명령어나 지우기 명령어가 실행 중인 수입니다. 0보다 크면 미번역 알림을 띄우지 않습니다.
+  busy: number
 }
 
 // Haiku에 한 번 요청한 결과입니다. failed는 번역에 실패한 원문과 그 이유이고, stopped가 있으면 그 이유를 보여 주고 번역을 멈춥니다.
@@ -125,6 +132,7 @@ export const register: Register = (on, options) => {
     noticeScheduled: false,
     interactive: undefined,
     described: new Map(),
+    busy: 0,
   }
 
   // 세션이 시작되면 번역 명령어와 번역 지우기 명령어를 등록합니다.
@@ -164,75 +172,100 @@ export const register: Register = (on, options) => {
   // 메뉴와 /help에 표시할 명령어 설명을 한국어로 바꿉니다.
   on('command.describe', async ($, e, next) => {
     state.described.set(e.command, e.description)
-    const description = await translateText($, state, 'commands', e.provider.plugin, `/${e.command}`, e.description)
+    const description = await translateText($, state, 'commands', e.provider, `/${e.command}`, e.description)
     return description === undefined ? next(e) : next({ ...e, description })
   })
 
   // Claude에게 보내기 직전의 스킬 목록에서 번역문을 영어 원문으로 되돌립니다.
   // 번역을 끈 뒤에도 Claude Code가 이전에 만든 목록을 다시 쓰는 경우가 있으므로, 설정과 관계없이 번역 사전을 기준으로 되돌립니다.
   // 되돌린 줄 수를 디버그 로그에 남겨서, 명령어 이름으로 원문을 찾았는지 확인할 수 있게 합니다.
+  // 번역 사전에 없는 번역문이 남은 줄은 명령어 이름으로 영어 설명을 찾아 바꿉니다. 영어 설명의 기록이 없어서 바꾸지 못한 줄은
+  // 디버그 로그에 명령어 이름을 남깁니다.
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     const loaded = await ensureLoaded($, state)
-    const layers = layersOf(loaded)
-    const result = restoreListing(
-      e.text,
-      buildReverse(layers, loaded.retired),
-      buildNamedReverse(state.described, layers, loaded.retired),
-    )
+    const result = restoreSkillListing(e.text, state, loaded)
     if (result.restored > 0) {
       $.ui.log(
         `스킬 목록에서 설명 ${result.restored}줄을 영어 원문으로 되돌렸습니다(명령어 이름으로 찾은 줄 ${result.byName}개, 사전 전체에서 찾은 줄 ${result.restored - result.byName}개).`,
         { to: 'debug' },
       )
     }
+    if (result.byFallback > 0) {
+      $.ui.log(`스킬 목록에서 번역표에 없는 번역문 ${result.byFallback}줄을 명령어 이름으로 찾은 영어 설명으로 바꿨습니다.`, {
+        to: 'debug',
+      })
+    }
     if (result.leftover > 0) {
       $.ui.log(`스킬 목록을 되돌린 뒤에도 번역문 ${result.leftover}개가 남아 있습니다. 목록 형식이 바뀌었을 수 있습니다.`, {
         to: 'debug',
       })
     }
-    return result.restored > 0 ? next({ ...e, text: result.text }) : next(e)
+    if (result.unresolved.length > 0) {
+      $.ui.log(`스킬 목록에서 영어 설명의 기록이 없어 되돌리지 못한 한글 줄이 있습니다: ${result.unresolved.join(', ')}`, {
+        to: 'debug',
+      })
+    }
+    return result.restored + result.byFallback > 0 ? next({ ...e, text: result.text }) : next(e)
   })
 
   // /config에 표시할 항목 이름과 도움말을 한국어로 바꿉니다.
   on('config.describe', async ($, e, next) => {
-    const label = await translateText($, state, 'config', e.provider.plugin, e.key, e.label)
+    const label = await translateText($, state, 'config', e.provider, e.key, e.label)
     const description =
-      e.description === undefined ? undefined : await translateText($, state, 'config', e.provider.plugin, e.key, e.description)
+      e.description === undefined ? undefined : await translateText($, state, 'config', e.provider, e.key, e.description)
     if (label === undefined && description === undefined) return next(e)
     return next({ ...e, label: label ?? e.label, description: description ?? e.description })
   })
 
   // /korean-ui-translate를 실행했을 때의 처리입니다. 인자가 없으면 번역되지 않은 문구를 번역하고, export이면 기본 항목의 번역을
   // 파일로 내보냅니다. 그 밖의 문장은 요청으로 보고, 그 요청대로 번역하거나 고칩니다.
+  // 세 명령어의 결과는 사람에게 보여 주는 관리용 문구라서, 화면에만 표시하고 Claude에게 보내는 요청에는 넣지 않습니다.
   on('command.run', { command: 'korean-ui-translate' }, async ($, e) => {
     const argument = e.args.trim()
-    if (argument === '') return { text: await runTranslate($, state) }
-    if (argument === 'export') return { text: await runExport($, state) }
-    return { text: await runRequest($, state, argument) }
+    if (argument === 'export') return displayOnly(await runExport($, state))
+    return displayOnly(await whileBusy(state, () => (argument === '' ? runTranslate($, state) : runRequest($, state, argument))))
   })
 
   // /korean-ui-reset을 실행했을 때의 처리입니다. 확인을 받은 뒤 Haiku 번역과 실패 횟수를 지웁니다.
   // 인자로 제공자 이름을 받으면 그 제공자의 번역만 지웁니다.
-  on('command.run', { command: 'korean-ui-reset' }, async ($, e) => ({ text: await runReset($, state, e.args.trim()) }))
+  on('command.run', { command: 'korean-ui-reset' }, async ($, e) =>
+    displayOnly(await whileBusy(state, () => runReset($, state, e.args.trim()))),
+  )
 
   // /korean-ui-status를 실행했을 때의 처리입니다. Haiku를 호출하지 않고 번역 현황을 보여 줍니다. 인자는 쓰지 않습니다.
-  on('command.run', { command: 'korean-ui-status' }, async ($) => ({ text: await runStatus($, state) }))
+  on('command.run', { command: 'korean-ui-status' }, async ($) => displayOnly(await runStatus($, state)))
+}
+
+// 명령어의 결과를 화면에만 표시하는 형태로 만듭니다. 이 결과는 Claude에게 보내는 요청에 들어가지 않습니다.
+function displayOnly(text: string): { text: string; isTextDisplayOnly: true } {
+  return { text, isTextDisplayOnly: true }
+}
+
+// 번역 명령어나 지우기 명령어를 실행하는 동안 실행 중 표시를 켜 둡니다. 그동안 예약된 미번역 알림은 띄우지 않습니다.
+async function whileBusy(state: State, run: () => Promise<string>): Promise<string> {
+  state.busy += 1
+  try {
+    return await run()
+  } finally {
+    state.busy -= 1
+  }
 }
 
 // 화면에 표시할 문구의 번역문을 찾습니다. 번역하지 않는 문구이거나 번역문이 없으면 undefined를 돌려줍니다.
-// 번역문이 없으면 미번역 알림을 예약합니다. name은 그 문구가 붙은 명령어 이름('/commit')이나 /config 항목의 key입니다.
+// 번역문이 없으면 미번역 알림을 예약합니다. provider는 그 문구를 제공한 플러그인과 그 위치(tier)이고,
+// name은 그 문구가 붙은 명령어 이름('/commit')이나 /config 항목의 key입니다.
 async function translateText(
   $: EngineInterface,
   state: State,
   kind: Kind,
-  providerPlugin: string,
+  provider: Origin,
   name: string,
   source: string,
 ): Promise<string | undefined> {
-  const category = categoryOf(providerPlugin, $.plugin.name)
+  const category = categoryOf(provider.plugin, $.plugin.name, provider.tier)
   const { base, state: current } = splitState(source)
   if (category === 'self' || !needsTranslation(base)) return undefined
-  recordSeen(state.seen, kind, base, category, name, providerLabel(providerPlugin))
+  recordSeen(state.seen, kind, base, category, name, providerLabel(provider.plugin, provider.tier))
   if (!isEnabled(category, state.settings)) return undefined
   const loaded = await ensureLoaded($, state)
   const translated = lookup(layersOf(loaded), kind, base)
@@ -249,15 +282,24 @@ function ensureLoaded($: EngineInterface, state: State): Promise<Loaded> {
   return state.loading
 }
 
-// 읽어 둔 값에서 번역문을 찾는 세 계층을 꺼냅니다.
+// 읽어 둔 번역 사전과 명령어 이름별 영어 설명으로 스킬 목록의 번역문을 영어 원문으로 되돌립니다.
+function restoreSkillListing(text: string, state: State, loaded: Loaded): ListingRestore {
+  const layers = layersOf(loaded)
+  const reverse = buildReverse(layers, loaded.retired)
+  return restoreListing(text, reverse, buildNamedReverse(state.described, layers, loaded.retired), state.described)
+}
+
+// 읽어 둔 값에서 번역문을 찾는 세 계층과 기본 번역표의 패턴을 꺼냅니다.
 function layersOf(loaded: Loaded): Layers {
-  return { overrides: loaded.overrides, bundled: loaded.bundled, user: loaded.user }
+  return { overrides: loaded.overrides, bundled: loaded.bundled, user: loaded.user, patterns: loaded.patterns }
 }
 
 // 기본 번역표, 고친 번역, 자동 번역, 알림 기록을 읽고 상태에 보관합니다.
 async function loadAll($: EngineInterface, state: State): Promise<Loaded> {
+  const bundled = await readBundled($)
   const loaded: Loaded = {
-    bundled: await readBundled($),
+    bundled: bundled.dictionary,
+    patterns: bundled.patterns,
     overrides: await readOverrides($),
     user: await readUser($),
     notified: await readNotified($),
@@ -267,14 +309,21 @@ async function loadAll($: EngineInterface, state: State): Promise<Loaded> {
   return loaded
 }
 
-// 플러그인 폴더의 기본 번역표를 읽습니다. 읽지 못하면 빈 사전으로 처리합니다.
-async function readBundled($: EngineInterface): Promise<Dictionary> {
+// 플러그인 폴더의 기본 번역표를 읽어 사전과 패턴으로 나눕니다. 읽지 못하면 빈 사전과 빈 패턴으로 처리합니다.
+// 규칙에 맞지 않아 버린 패턴이 있으면 디버그 로그에 남깁니다.
+async function readBundled($: EngineInterface): Promise<{ dictionary: Dictionary; patterns: PatternTable }> {
+  let raw: unknown
   try {
-    return parseDictionary(JSON.parse(await $.fs.read(`${$.plugin.root}/locales/ko.json`)))
+    raw = JSON.parse(await $.fs.read(`${$.plugin.root}/locales/ko.json`))
   } catch (error) {
     $.ui.log(`기본 번역표를 읽지 못했습니다: ${messageOf(error)}`, { to: 'debug' })
-    return emptyDictionary()
+    return { dictionary: emptyDictionary(), patterns: emptyPatterns() }
   }
+  const { table, dropped } = parsePatterns(raw)
+  if (dropped.length > 0) {
+    $.ui.log(`기본 번역표의 패턴 ${dropped.length}개를 규칙에 맞지 않아 버렸습니다: ${dropped.join(', ')}`, { to: 'debug' })
+  }
+  return { dictionary: parseDictionary(raw), patterns: table }
 }
 
 // 저장소에서 요청으로 고친 번역을 읽습니다. 읽지 못하면 빈 사전으로 처리합니다.
@@ -395,7 +444,12 @@ function scheduleNotice($: EngineInterface, state: State): void {
 // 다른 세션이 그사이 번역하거나 알린 문구, 3번 실패해서 건너뛴 문구는 알리지 않도록 저장소를 다시 읽습니다.
 // 사람이 입력창 앞에 없는 실행(-p, SDK)에서는 알림을 띄우지도, 기록하지도 않습니다.
 // 알림 기록은 저장하기 직전에 가장 마지막으로 읽어서, 그사이 다른 세션이 저장한 기록을 덮어쓰지 않게 합니다.
+// 번역 명령어나 지우기 명령어가 실행 중이면 알리지 않고, 명령어가 끝난 뒤 다시 예약될 수 있게 예약 표시를 지웁니다.
 async function showNotice($: EngineInterface, state: State): Promise<void> {
+  if (state.busy > 0) {
+    state.noticeScheduled = false
+    return
+  }
   const loaded = state.loaded
   if (loaded === undefined || state.interactive === false) return
   await refreshStored($, loaded)
@@ -744,17 +798,23 @@ async function askReset($: EngineInterface, question: string): Promise<ResetAnsw
 }
 
 // 지운 결과를 한 문장으로 잇고, '지우고 다시 번역'을 골랐으면 이어서 번역한 결과를 붙입니다.
-// only가 있으면 그 원문만 다시 번역합니다.
+// only가 있으면 그 원문만 다시 번역합니다. disabled가 있으면 그 원문의 번역이 /config에서 꺼져 있다는 뜻이므로,
+// 다시 번역하지 않고 켜야 할 설정을 알려 줍니다.
 async function finishReset(
   $: EngineInterface,
   state: State,
   answer: ResetAnswer,
   parts: readonly string[],
   only?: SourceSet,
+  disabled?: 'builtin' | 'others',
 ): Promise<string> {
   $.ui.invalidate('command.describe')
   $.ui.invalidate('config.describe')
   const done = parts.filter((part) => part !== '').join(' ')
+  if (disabled !== undefined) {
+    const setting = MESSAGES.categoryNames[disabled]
+    return answer === 'remove' ? `${done} ${MESSAGES.resetOffHint(setting)}` : `${done}\n${MESSAGES.retranslateOff(setting)}`
+  }
   if (answer === 'remove') return `${done} ${MESSAGES.resetRetranslateHint}`
   return `${done}\n${await runTranslate($, state, only)}`
 }
@@ -825,7 +885,8 @@ async function removeFailures($: EngineInterface, version: string | undefined, s
 
 // 제공자 하나의 원문에 해당하는 자동 번역, 고친 번역, 실패 횟수만 사용자에게 확인을 받은 뒤 지웁니다.
 // 이름이 일치하는 제공자가 없으면 아무것도 지우지 않고 지정할 수 있는 이름을 알려 줍니다.
-// '지우고 다시 번역'을 고르면 그 제공자의 원문만 다시 번역합니다.
+// '지우고 다시 번역'을 고르면 그 제공자의 원문만 다시 번역합니다. 그 제공자의 번역이 /config에서 꺼져 있으면
+// 다시 번역하지 않고 켜야 할 설정을 알려 줍니다.
 async function resetProvider($: EngineInterface, state: State, argument: string): Promise<string> {
   await collectSources($)
   const loaded = await ensureLoaded($, state)
@@ -863,5 +924,6 @@ async function resetProvider($: EngineInterface, state: State, argument: string)
   } catch (error) {
     notes.push(MESSAGES.resetFailuresKept(messageOf(error)))
   }
-  return finishReset($, state, answer, [MESSAGES.resetDone(removed, skippedRemoved, provider), ...notes], sources)
+  const disabled = disabledCategoryOf(state.seen, provider, state.settings)
+  return finishReset($, state, answer, [MESSAGES.resetDone(removed, skippedRemoved, provider), ...notes], sources, disabled)
 }

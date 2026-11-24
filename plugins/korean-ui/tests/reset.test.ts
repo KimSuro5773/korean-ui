@@ -1,5 +1,5 @@
 import { expect, test, type Engine } from 'claude-code/testing'
-import { MESSAGES } from '../hooks/lib/translation.ts'
+import { MESSAGES } from '../hooks/lib/translation'
 import {
   BUILTIN,
   CLEAR_EN,
@@ -12,14 +12,15 @@ import {
   VERSION,
   answer,
   describeCommand,
+  runCommand,
   sendListing,
   setupWorld,
   type World,
-} from './helpers.ts'
+} from './helpers'
 
 // /korean-ui-reset 명령어를 실행합니다. args에 제공자 이름을 넣으면 그 제공자의 번역만 지웁니다.
 function reset($: Engine, args = '') {
-  return $.command.run({ command: 'korean-ui-reset', args })
+  return runCommand($, 'korean-ui-reset', args)
 }
 
 const TWO = { commands: { [CLEAR_EN]: CLEAR_KO }, config: { 'Sample setting': '시험용 설정' } }
@@ -98,7 +99,7 @@ test('다른 세션이 번역을 지운 뒤 다시 읽어도 이전 스킬 목�
   const world = setupWorld(on, { store: { dictionary: { commands: { [OTHER_EN]: OTHER_KO }, config: {} } } })
   await describeCommand($, OTHER_EN, OTHER, 'deploy')
   world.saved.delete('dictionary')
-  await $.command.run({ command: 'korean-ui-translate', args: '' })
+  await runCommand($, 'korean-ui-translate', '')
   expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
 })
 
@@ -114,7 +115,7 @@ test('번역을 저장하며 합칠 때 다른 세션이 지운 번역문도 영
   })
   await describeCommand($, OTHER_EN, OTHER, 'deploy')
   await describeCommand($, CLEAR_EN, BUILTIN, 'clear')
-  await $.command.run({ command: 'korean-ui-translate', args: '' })
+  await runCommand($, 'korean-ui-translate', '')
   expect(world.saved.get('dictionary')).toEqual({ commands: { [CLEAR_EN]: CLEAR_KO }, config: {} })
   expect((await sendListing($, `- deploy: ${OTHER_KO}`)).text).toBe(`- deploy: ${OTHER_EN}`)
 })
