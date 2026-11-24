@@ -2,7 +2,7 @@
 
 Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표시하는 플러그인입니다.
 
-![version](https://img.shields.io/badge/version-0.2.1-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.287-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-0.2.2-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-%E2%89%A52.1.326-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
   <img src="assets/menu-before.png" width="720" alt="번역 전: 명령어 설명이 영어로 표시된 / 메뉴"><br>
@@ -17,7 +17,7 @@ Claude Code의 명령어 설명과 `/config` 설정 항목을 한국어로 표�
 ## 빠른 시작
 
 > [!IMPORTANT]
-> Claude Code 2.1.287 이상이 필요합니다. 터미널에서 `claude --version`으로 버전을 확인할 수 있습니다.
+> Claude Code 2.1.326 이상이 필요합니다. 터미널에서 `claude --version`으로 버전을 확인할 수 있습니다.
 
 Claude Code를 실행한 뒤 다음 두 줄을 입력합니다.
 
@@ -155,7 +155,7 @@ Claude Code에서 다음 두 줄을 입력합니다.
 
 **Q. 번역이 표시되지 않아요.**
 
-mods가 꺼져 있으면 이 플러그인이 동작하지 않습니다. `disableAllHooks` 설정을 켰거나 `--safe-mode`, `--bare`로 실행했는지 확인합니다. Claude Code가 업데이트되어 mods의 기능이 바뀐 경우에도 번역이 표시되지 않을 수 있으니, 플러그인의 새 버전이 있는지 확인합니다.
+먼저 `claude --version`으로 Claude Code 버전을 확인합니다. 2.1.326보다 이전 버전에서는 플러그인이 꺼지거나 동작하지 않습니다. mods가 꺼져 있어도 이 플러그인이 동작하지 않습니다. `disableAllHooks` 설정을 켰거나 `--safe-mode`, `--bare`로 실행했는지 확인합니다. Claude Code가 업데이트되어 mods의 기능이 바뀐 경우에도 번역이 표시되지 않을 수 있으니, 플러그인의 새 버전이 있는지 확인합니다.
 
 **Q. 번역 하나가 마음에 들지 않아요.**
 
@@ -163,11 +163,11 @@ mods가 꺼져 있으면 이 플러그인이 동작하지 않습니다. `disable
 
 **Q. `/config`의 선택지 값이나 명령어 뒤의 `[key=value ...]`는 왜 영어인가요?**
 
-선택지 값(예: `dark`, `light`)과 인자 힌트는 mods의 기능으로 바꿀 수 없는 부분이라 영어로 표시됩니다.
+선택지 값(예: `dark`, `light`)은 mods의 기능으로 바꿀 수 없어서 영어로 표시됩니다. 인자 힌트는 입력 형식을 그대로 보여 주는 부분이라 번역하지 않습니다.
 
 **Q. 기본 설정 항목에는 설명이 없어요.**
 
-Claude Code가 기본 설정 항목에 도움말을 제공하지 않으므로, 기본 설정 항목은 이름만 번역됩니다.
+Claude Code 자체의 설정 항목에는 도움말이 없어서 이름만 번역됩니다. Claude Code에 들어 있는 플러그인(easel, agents-md)의 항목은 도움말도 번역됩니다.
 
 **Q. 번역한 명령어가 영어 단어로 검색되지 않아요.**
 
@@ -181,9 +181,9 @@ Claude Code가 기본 설정 항목에 도움말을 제공하지 않으므로, �
 
 여러 줄로 된 스킬 설명은 Claude가 스킬을 고를 때 쓰는 지시문이므로 번역하지 않습니다.
 
-**Q. `/sandbox`의 설명이 다시 영어로 보여요.**
+**Q. 모델 이름이나 상태가 들어간 설명이 영어로 보여요.**
 
-`/sandbox`처럼 현재 상태가 설명에 들어가는 명령어는 상태마다 원문이 달라서 따로 번역됩니다. 미번역 알림이 보이면 `/korean-ui-translate`를 실행합니다.
+모델 이름, 버전, `/sandbox` 상태처럼 바뀌는 값이 들어간 기본 명령어 설명과 설정 항목은, 바뀌는 값만 그대로 두고 나머지를 번역하는 규칙(패턴)으로 번역합니다. 패턴에 없는 새 문구가 영어로 보이면 플러그인을 업데이트하거나 `/korean-ui-translate`를 실행합니다.
 
 ## 라이선스
 
